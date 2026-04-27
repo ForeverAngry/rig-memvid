@@ -1,0 +1,50 @@
+[package]
+name = "rig-memvid"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+readme = "README.md"
+description = "Memvid-backed persistent memory and lexical store for Rig agents."
+repository = "https://github.com/ForeverAngry/rig-memvid"
+authors = ["ForeverAngry"]
+keywords = ["rig", "memvid", "ai", "agent", "memory"]
+categories = ["text-processing", "database"]
+
+[dependencies]
+rig-core = { version = "0.35.0", default-features = false }
+memvid-core = { version = "2.0.139", default-features = false }
+thiserror = "2.0.12"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+tracing = "0.1.41"
+futures = "0.3.32"
+
+[dev-dependencies]
+anyhow = "1.0.102"
+tempfile = "3"
+tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
+
+[features]
+default = ["lex"]
+lex = ["memvid-core/lex"]
+temporal = ["memvid-core/temporal_track"]
+encryption = ["memvid-core/encryption"]
+
+[lints.clippy]
+dbg_macro = "forbid"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+expect_used = "deny"
+expect_fun_call = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+todo = "forbid"
+unimplemented = "forbid"
+unreachable = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+lto = true
+opt-level = "s"
