@@ -15,16 +15,59 @@ The two compose: persist with the hook, recall with the store. They share an
 
 ## Features
 
-| Feature      | Default | Description                                              |
-| ------------ | ------- | -------------------------------------------------------- |
-| `lex`        | yes     | BM25 / Tantivy lexical search.                           |
-| `temporal`   | no      | Temporal track / point-in-time queries.                  |
-| `encryption` | no      | At-rest encryption of the `.mv2` file.                   |
+| Feature      | Default | Description                                                                                                            |
+| ------------ | ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `lex`        | yes     | BM25 / Tantivy lexical search.                                                                                         |
+| `vec`        | no      | HNSW vector search via `memvid-core/vec` (ONNX Runtime + bundled BGE-small / BGE-base / Nomic / GTE-large).            |
+| `api_embed`  | no      | Remote embedding providers (OpenAI etc.) via `memvid-core/api_embed`.                                                  |
+| `temporal`   | no      | Temporal track / point-in-time queries.                                                                                |
+| `encryption` | no      | At-rest encryption of the `.mv2` file.                                                                                 |
 
-v0.1 is lexical-only. Vector backends (`memvid-core/vec`, `memvid-core/api-embed`)
-pin `ort = =2.0.0-rc.10`, which conflicts with `rig-fastembed`'s `=2.0.0-rc.9`
-pin and breaks dependency resolution for any workspace that uses both. Vector
-support will be re-enabled once those pins converge.
+### Vector search (`vec`)
+
+Enabling `vec` pulls in `ort = =2.0.0-rc.10`, which conflicts with
+`rig-fastembed`'s `=2.0.0-rc.9`. Workspaces that depend on `rig-fastembed`
+must stay on the default lex-only configuration until those pins converge
+upstream. Workspaces that don't can opt in:
+
+```toml
+[dependencies]
+rig-memvid = { version = "0.1", features = ["lex", "vec"] }
+```
+
+Attach a local embedder on the builder; reads and writes through
+[`MemvidStore`] are then routed through memvid's HNSW index instead of
+BM25:
+
+```rust,ignore
+let store = MemvidStore::builder()
+    .path("./agent_memory.mv2")
+    .with_default_embedder()? // BGE-small, 384-dim
+    .open_or_create()?;
+```
+
+The ONNX model and tokenizer are loaded from
+`$XDG_CACHE_HOME/memvid/text-models/` (or the platform equivalent). They
+must already be on disk; memvid does not auto-download. Fetch them with:
+
+```bash
+mkdir -p ~/Library/Caches/memvid/text-models   # macOS
+curl -L https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx \
+  -o ~/Library/Caches/memvid/text-models/bge-small-en-v1.5.onnx
+curl -L https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json \
+  -o ~/Library/Caches/memvid/text-models/bge-small-en-v1.5_tokenizer.json
+```
+
+When an embedder is attached:
+
+- `MemvidStore::put_text` embeds the payload and stores it via
+  `put_with_embedding_and_options`.
+- `MemvidStore::top_n` / `top_n_ids` embed the query and run
+  `vec_search_with_embedding`.
+- `MemvidFilter::scope` is honoured; `uri`, `as_of_frame`, and `as_of_ts`
+  return `MemvidError::UnsupportedFilter` (memvid's vector path doesn't
+  support those). Drop down to `MemvidStore::search(SearchRequest)` for
+  full filter control.
 
 ## Compatibility
 

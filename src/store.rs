@@ -3,6 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[cfg(feature = "vec")]
+use memvid_core::{LocalTextEmbedder, TextEmbedConfig};
 use memvid_core::{Memvid, PutOptions, SearchHit, SearchRequest};
 use rig::{
     Embed, OneOrMany,
@@ -34,6 +36,8 @@ use crate::error::MemvidError;
 #[derive(Clone)]
 pub struct MemvidStore {
     inner: Arc<Mutex<Memvid>>,
+    #[cfg(feature = "vec")]
+    embedder: Option<Arc<LocalTextEmbedder>>,
 }
 
 impl std::fmt::Debug for MemvidStore {
@@ -47,6 +51,8 @@ impl MemvidStore {
     pub fn from_memvid(memvid: Memvid) -> Self {
         Self {
             inner: Arc::new(Mutex::new(memvid)),
+            #[cfg(feature = "vec")]
+            embedder: None,
         }
     }
 
@@ -61,11 +67,40 @@ impl MemvidStore {
         self.inner.lock().map_err(|_| MemvidError::Poisoned)
     }
 
+    /// Whether this store will route writes/queries through a local
+    /// embedding model.
+    #[cfg(feature = "vec")]
+    #[must_use]
+    pub fn has_embedder(&self) -> bool {
+        self.embedder.is_some()
+    }
+
+    /// Encode `text` with the configured embedder, if any.
+    #[cfg(feature = "vec")]
+    fn encode(&self, text: &str) -> Result<Option<Vec<f32>>, MemvidError> {
+        match &self.embedder {
+            Some(embedder) => Ok(Some(embedder.encode_text(text)?)),
+            None => Ok(None),
+        }
+    }
+
     /// Append a UTF-8 text payload to the archive and immediately commit.
     ///
-    /// Returns the assigned `frame_id`.
+    /// Returns the assigned `frame_id`. When the store has been built with
+    /// an embedder (`vec` feature), the text is embedded and stored
+    /// alongside its frame so that subsequent
+    /// [`VectorStoreIndex::top_n`] calls perform semantic search.
     pub fn put_text(&self, text: &str, options: PutOptions) -> Result<u64, MemvidError> {
+        #[cfg(feature = "vec")]
+        let embedding = self.encode(text)?;
         let mut guard = self.lock()?;
+        #[cfg(feature = "vec")]
+        let id = if let Some(emb) = embedding {
+            guard.put_with_embedding_and_options(text.as_bytes(), emb, options)?
+        } else {
+            guard.put_bytes_with_options(text.as_bytes(), options)?
+        };
+        #[cfg(not(feature = "vec"))]
         let id = guard.put_bytes_with_options(text.as_bytes(), options)?;
         guard.commit()?;
         Ok(id)
@@ -79,7 +114,16 @@ impl MemvidStore {
         text: &str,
         options: PutOptions,
     ) -> Result<u64, MemvidError> {
+        #[cfg(feature = "vec")]
+        let embedding = self.encode(text)?;
         let mut guard = self.lock()?;
+        #[cfg(feature = "vec")]
+        let id = if let Some(emb) = embedding {
+            guard.put_with_embedding_and_options(text.as_bytes(), emb, options)?
+        } else {
+            guard.put_bytes_with_options(text.as_bytes(), options)?
+        };
+        #[cfg(not(feature = "vec"))]
         let id = guard.put_bytes_with_options(text.as_bytes(), options)?;
         Ok(id)
     }
@@ -105,10 +149,31 @@ impl MemvidStore {
 }
 
 /// Builder for [`MemvidStore`].
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct MemvidStoreBuilder {
     path: Option<PathBuf>,
     enable_lex: bool,
+    #[cfg(feature = "vec")]
+    enable_vec: bool,
+    #[cfg(feature = "vec")]
+    vec_model: Option<String>,
+    #[cfg(feature = "vec")]
+    embedder: Option<Arc<LocalTextEmbedder>>,
+}
+
+impl std::fmt::Debug for MemvidStoreBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("MemvidStoreBuilder");
+        d.field("path", &self.path)
+            .field("enable_lex", &self.enable_lex);
+        #[cfg(feature = "vec")]
+        {
+            d.field("enable_vec", &self.enable_vec)
+                .field("vec_model", &self.vec_model)
+                .field("embedder", &self.embedder.as_ref().map(|_| "<embedder>"));
+        }
+        d.finish()
+    }
 }
 
 impl MemvidStoreBuilder {
@@ -122,6 +187,62 @@ impl MemvidStoreBuilder {
     pub fn enable_lex(mut self) -> Self {
         self.enable_lex = true;
         self
+    }
+
+    /// Enable HNSW vector search on the underlying archive.
+    ///
+    /// Available only when this crate is built with the `vec` feature, which
+    /// pulls in `memvid-core/vec` (ONNX Runtime + bundled BGE-small).
+    /// Mutually compatible with [`Self::enable_lex`]; both can be on at once
+    /// for hybrid retrieval.
+    #[cfg(feature = "vec")]
+    pub fn enable_vec(mut self) -> Self {
+        self.enable_vec = true;
+        self
+    }
+
+    /// Bind (or validate) the embedding model identifier on the vector
+    /// index. See [`memvid_core::Memvid::set_vec_model`].
+    #[cfg(feature = "vec")]
+    pub fn vec_model(mut self, model: impl Into<String>) -> Self {
+        self.vec_model = Some(model.into());
+        self
+    }
+
+    /// Attach a local text embedder. Writes performed via
+    /// [`MemvidStore::put_text`] and queries performed via
+    /// [`VectorStoreIndex::top_n`] will be embedded with this model and
+    /// routed through memvid's HNSW vector index.
+    ///
+    /// Implies [`Self::enable_vec`]. If [`Self::vec_model`] has not been
+    /// set, the model identifier reported by the embedder is bound
+    /// automatically.
+    #[cfg(feature = "vec")]
+    pub fn embedder(mut self, embedder: LocalTextEmbedder) -> Self {
+        if self.vec_model.is_none() {
+            self.vec_model = Some(embedder.model_info().name.to_string());
+        }
+        self.embedder = Some(Arc::new(embedder));
+        self.enable_vec = true;
+        self
+    }
+
+    /// Convenience: attach the default local embedder (BGE-small,
+    /// 384-dimensional). The model is loaded from
+    /// [`TextEmbedConfig::default`]'s on-disk cache; if absent and
+    /// `offline` is `false` it will be downloaded.
+    #[cfg(feature = "vec")]
+    pub fn with_default_embedder(self) -> Result<Self, MemvidError> {
+        let embedder = LocalTextEmbedder::new(TextEmbedConfig::bge_small())?;
+        Ok(self.embedder(embedder))
+    }
+
+    /// Convenience: attach a local embedder built from an explicit
+    /// [`TextEmbedConfig`].
+    #[cfg(feature = "vec")]
+    pub fn with_embedder_config(self, config: TextEmbedConfig) -> Result<Self, MemvidError> {
+        let embedder = LocalTextEmbedder::new(config)?;
+        Ok(self.embedder(embedder))
     }
 
     fn require_path(&self) -> Result<&Path, MemvidError> {
@@ -138,7 +259,22 @@ impl MemvidStoreBuilder {
         if self.enable_lex {
             memvid.enable_lex()?;
         }
-        Ok(MemvidStore::from_memvid(memvid))
+        #[cfg(feature = "vec")]
+        {
+            if self.enable_vec {
+                memvid.enable_vec()?;
+            }
+            if let Some(model) = self.vec_model.as_deref() {
+                memvid.set_vec_model(model)?;
+            }
+        }
+        #[cfg_attr(not(feature = "vec"), allow(unused_mut))]
+        let mut store = MemvidStore::from_memvid(memvid);
+        #[cfg(feature = "vec")]
+        {
+            store.embedder = self.embedder;
+        }
+        Ok(store)
     }
 
     /// Open an existing `.mv2` file. Errors if the file does not exist.
@@ -356,6 +492,52 @@ fn hit_score(hit: &SearchHit) -> f64 {
     }
 }
 
+#[cfg(feature = "vec")]
+fn ensure_vec_filter_supported(filter: &MemvidFilter) -> Result<(), MemvidError> {
+    if filter.uri.is_some() {
+        return Err(MemvidError::UnsupportedFilter(
+            "`uri` filter is not supported when querying through the embedder; use lex search"
+                .into(),
+        ));
+    }
+    if filter.as_of_frame.is_some() || filter.as_of_ts.is_some() {
+        return Err(MemvidError::UnsupportedFilter(
+            "point-in-time filters (`as_of_frame`, `as_of_ts`) are not supported under vector \
+             search; use lex or `MemvidStore::search` directly"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+impl MemvidStore {
+    /// Run an embedding-driven search through memvid's HNSW index.
+    /// Pre-validated by the caller; returns the raw memvid response.
+    #[cfg(feature = "vec")]
+    fn vec_search(
+        &self,
+        query: &str,
+        samples: u64,
+        filter: &MemvidFilter,
+    ) -> Result<memvid_core::SearchResponse, MemvidError> {
+        let embedder = self
+            .embedder
+            .as_ref()
+            .ok_or_else(|| MemvidError::UnsupportedFilter("no embedder configured".into()))?;
+        let embedding = embedder.encode_text(query)?;
+        let top_k = usize::try_from(samples).unwrap_or(usize::MAX);
+        let mut guard = self.lock()?;
+        let resp = guard.vec_search_with_embedding(
+            query,
+            &embedding,
+            top_k,
+            DEFAULT_SNIPPET_CHARS,
+            filter.scope.as_deref(),
+        )?;
+        Ok(resp)
+    }
+}
+
 impl VectorStoreIndex for MemvidStore {
     type Filter = MemvidFilter;
 
@@ -369,10 +551,29 @@ impl VectorStoreIndex for MemvidStore {
         let query = req.query().to_owned();
         let samples = req.samples();
         let filter = req.filter().clone();
-        let request =
-            build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
 
+        #[cfg(feature = "vec")]
+        let response = if self.embedder.is_some() {
+            let validated = match filter.clone() {
+                Some(f) => f.into_validated().map_err(VectorStoreError::from)?,
+                None => MemvidFilter::default(),
+            };
+            ensure_vec_filter_supported(&validated).map_err(VectorStoreError::from)?;
+            self.vec_search(&query, samples, &validated)
+                .map_err(VectorStoreError::from)?
+        } else {
+            let request =
+                build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
+            let mut guard = self
+                .inner
+                .lock()
+                .map_err(|_| VectorStoreError::from(MemvidError::Poisoned))?;
+            guard.search(request).map_err(MemvidError::from)?
+        };
+        #[cfg(not(feature = "vec"))]
         let response = {
+            let request =
+                build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -398,10 +599,29 @@ impl VectorStoreIndex for MemvidStore {
         let query = req.query().to_owned();
         let samples = req.samples();
         let filter = req.filter().clone();
-        let request =
-            build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
 
+        #[cfg(feature = "vec")]
+        let response = if self.embedder.is_some() {
+            let validated = match filter.clone() {
+                Some(f) => f.into_validated().map_err(VectorStoreError::from)?,
+                None => MemvidFilter::default(),
+            };
+            ensure_vec_filter_supported(&validated).map_err(VectorStoreError::from)?;
+            self.vec_search(&query, samples, &validated)
+                .map_err(VectorStoreError::from)?
+        } else {
+            let request =
+                build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
+            let mut guard = self
+                .inner
+                .lock()
+                .map_err(|_| VectorStoreError::from(MemvidError::Poisoned))?;
+            guard.search(request).map_err(MemvidError::from)?
+        };
+        #[cfg(not(feature = "vec"))]
         let response = {
+            let request =
+                build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -425,20 +645,48 @@ impl InsertDocuments for MemvidStore {
     where
         Doc: Serialize + Embed + WasmCompatSend,
     {
-        // We deliberately ignore the externally-supplied embeddings: memvid
-        // owns its own embedding pipeline and embeds at the segment level.
-        // Round-tripping the document through JSON gives us a stable byte
-        // payload that is also what `serde_json::from_value::<T>` will
+        // We deliberately ignore the externally-supplied embeddings (rig
+        // computes them with its own model, but memvid validates the
+        // dimension against its bound model and would reject mismatches).
+        // When this store has its own embedder, embed each document with
+        // the local model. Round-tripping the document through JSON gives
+        // us a stable byte payload that `serde_json::from_value::<T>` can
         // recover during search.
+        #[cfg(feature = "vec")]
+        let local_embedder = self.embedder.clone();
+        let mut prepared: Vec<(Vec<u8>, Option<Vec<f32>>)> = Vec::with_capacity(documents.len());
+        for (doc, _embeddings) in documents {
+            let bytes = serde_json::to_vec(&doc).map_err(MemvidError::from)?;
+            #[cfg(feature = "vec")]
+            let emb = match &local_embedder {
+                Some(embedder) => {
+                    let text = std::str::from_utf8(&bytes).unwrap_or("");
+                    Some(embedder.encode_text(text).map_err(MemvidError::from)?)
+                }
+                None => None,
+            };
+            #[cfg(not(feature = "vec"))]
+            let emb: Option<Vec<f32>> = None;
+            prepared.push((bytes, emb));
+        }
+
         let mut guard = self
             .inner
             .lock()
             .map_err(|_| VectorStoreError::from(MemvidError::Poisoned))?;
-        for (doc, _embeddings) in documents {
-            let bytes = serde_json::to_vec(&doc).map_err(MemvidError::from)?;
-            guard
-                .put_bytes_with_options(&bytes, PutOptions::default())
-                .map_err(MemvidError::from)?;
+        for (bytes, emb) in prepared {
+            match emb {
+                Some(embedding) => {
+                    guard
+                        .put_with_embedding_and_options(&bytes, embedding, PutOptions::default())
+                        .map_err(MemvidError::from)?;
+                }
+                None => {
+                    guard
+                        .put_bytes_with_options(&bytes, PutOptions::default())
+                        .map_err(MemvidError::from)?;
+                }
+            }
         }
         guard.commit().map_err(MemvidError::from)?;
         Ok(())

@@ -28,6 +28,8 @@ tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
 [features]
 default = ["lex"]
 lex = ["memvid-core/lex"]
+vec = ["memvid-core/vec"]
+api_embed = ["memvid-core/api_embed"]
 temporal = ["memvid-core/temporal_track"]
 encryption = ["memvid-core/encryption"]
 
