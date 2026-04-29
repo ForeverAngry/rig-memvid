@@ -14,6 +14,7 @@ use rig_memvid::{MemvidFilter, MemvidStore};
 use serde::{Deserialize, Serialize};
 use tempfile::tempdir;
 
+#[cfg(feature = "lex")]
 #[tokio::test]
 async fn put_then_top_n_returns_hit() -> Result<()> {
     let dir = tempdir()?;
@@ -62,6 +63,7 @@ impl Embed for Doc {
     }
 }
 
+#[cfg(feature = "lex")]
 #[tokio::test]
 async fn insert_documents_then_top_n_ids() -> Result<()> {
     let dir = tempdir()?;

@@ -92,8 +92,8 @@ async fn main() -> Result<()> {
 
     let base_url = std::env::var("OLLAMA_API_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:11434".to_string());
-    let requested = std::env::var("OLLAMA_MODEL")
-        .unwrap_or_else(|_| "qwen2.5-coder:3b-instruct".to_string());
+    let requested =
+        std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen2.5-coder:3b-instruct".to_string());
     let model_name = resolve_model(&base_url, &requested).await;
 
     println!("Using Ollama at {base_url} with model `{model_name}`");
