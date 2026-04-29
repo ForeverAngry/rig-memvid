@@ -1,0 +1,62 @@
+[workspace]
+# release-plz drives semver from Conventional Commits:
+#   feat:        -> minor bump
+#   fix:         -> patch bump
+#   feat!: / BREAKING CHANGE: footer -> major bump (or minor while 0.x)
+#
+# Anything else (chore, docs, ci, refactor, test, build, perf) goes into the
+# changelog under its section but does not bump the version on its own.
+allow_dirty = false
+publish_allow_dirty = false
+git_release_enable = true
+git_tag_enable = true
+changelog_update = true
+semver_check = true
+publish = true
+publish_features = []
+publish_no_verify = false
+release = true
+
+[changelog]
+header = """# Changelog
+
+All notable changes to this project are documented here. The format is based
+on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
+adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Versions are managed automatically by [release-plz](https://release-plz.dev/)
+from [Conventional Commits](https://www.conventionalcommits.org/).
+"""
+body = """
+## [{{ version }}]{%- if release_link -%}({{ release_link }}){%- endif %} - {{ timestamp | date(format="%Y-%m-%d") }}
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}*({{ commit.scope }})* {% endif %}\
+    {% if commit.breaking %}[**breaking**] {% endif %}\
+    {{ commit.message | upper_first }}\
+    {% if commit.links %} ({% for link in commit.links %}[{{ link.text }}]({{ link.href }}){% if not loop.last %}, {% endif %}{% endfor %}){% endif %}
+{%- endfor %}
+{% endfor %}
+"""
+trim = true
+commit_parsers = [
+  { message = "^feat",     group = "Added" },
+  { message = "^fix",      group = "Fixed" },
+  { message = "^perf",     group = "Performance" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^docs",     group = "Documentation" },
+  { message = "^test",     group = "Tests" },
+  { message = "^build",    group = "Build" },
+  { message = "^ci",       group = "CI" },
+  { message = "^chore",    skip = true },
+  { message = "^style",    skip = true },
+  { body = ".*security",   group = "Security" },
+]
+
+[[package]]
+name = "rig-memvid"
+semver_check = true
+git_release_enable = true
+git_tag_enable = true
+git_tag_name = "v{{ version }}"
+publish = true

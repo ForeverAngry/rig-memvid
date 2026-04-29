@@ -33,6 +33,7 @@ so writes are searchable on the next turn.
 - [Filters](#filters)
 - [Compatibility](#compatibility)
 - [Caveats](#caveats)
+- [Releasing](#releasing)
 - [License](#license)
 
 ## Features
@@ -174,6 +175,36 @@ This crate is community-maintained and not affiliated with the `rig` project.
 - **BM25 tokenization is strict.** Lexical queries with stopwords or
   full-sentence phrasing may return zero hits — prefer keyword-style
   queries on the lex path, or enable `vec` for semantic retrieval.
+
+## Releasing
+
+Versioning is automated by [release-plz](https://release-plz.dev/) from
+[Conventional Commits](https://www.conventionalcommits.org/) on `main`:
+
+| Commit prefix         | Effect                              |
+| --------------------- | ----------------------------------- |
+| `feat: …`             | minor bump (`0.X.0`)                |
+| `fix: …` / `perf: …`  | patch bump (`0.0.X`)                |
+| `feat!: …` or footer `BREAKING CHANGE:` | major bump (`X.0.0`) — minor while `0.x` |
+| `docs:` / `chore:` / `ci:` / `refactor:` / `test:` | changelog only, no bump |
+
+On every push to `main`, the `release-plz PR` workflow opens (or updates) a
+release PR with the new `Cargo.toml` version and a generated `CHANGELOG.md`.
+Merging that PR triggers `release-plz release`, which tags the commit
+(`v0.X.Y`), creates a GitHub release, and publishes to crates.io.
+
+PR titles are validated as Conventional Commits by a lint job. Locally:
+
+```bash
+just release-preview   # dry-run: see what would bump
+just next-version      # short summary of the next computed version
+```
+
+Required GitHub secrets:
+
+- `CARGO_REGISTRY_TOKEN` — from <https://crates.io/settings/tokens>
+- `RELEASE_PLZ_TOKEN` *(optional)* — a PAT if you want release-plz PRs to
+  trigger CI workflows; otherwise the default `GITHUB_TOKEN` is used.
 
 ## License
 

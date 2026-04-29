@@ -74,3 +74,16 @@ publish-dry-run:
 # Publish to crates.io. Requires `cargo login` or CARGO_REGISTRY_TOKEN.
 publish:
     cargo publish
+
+# Preview what release-plz would bump/changelog without changing anything.
+# Install: `cargo install release-plz` (or `brew install release-plz`).
+release-preview:
+    release-plz update --dry-run
+
+# Open a release PR locally (writes to a branch). Same thing CI does on push.
+release-pr:
+    release-plz release-pr
+
+# Inspect the next semver bump release-plz would compute from current commits.
+next-version:
+    @release-plz update --dry-run 2>&1 | grep -E "(bumping|no changes)" || true
