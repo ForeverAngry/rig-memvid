@@ -2,7 +2,7 @@
 name = "rig-memvid"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 readme = "README.md"
 description = "Memvid-backed persistent memory and lexical store for Rig agents."

@@ -1,8 +1,11 @@
 //! End-to-end smoke test for `MemvidStore` against a real memvid archive.
 #![allow(clippy::panic_in_result_fn)]
 
+#[cfg(feature = "lex")]
 use anyhow::Result;
+#[cfg(feature = "lex")]
 use memvid_core::PutOptions;
+#[cfg(feature = "lex")]
 use rig::{
     Embed, OneOrMany,
     embeddings::{Embedding, embed::EmbedError},
@@ -10,8 +13,11 @@ use rig::{
         InsertDocuments, VectorSearchRequest, VectorStoreIndex, request::VectorSearchRequestBuilder,
     },
 };
+#[cfg(feature = "lex")]
 use rig_memvid::{MemvidFilter, MemvidStore};
+#[cfg(feature = "lex")]
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "lex")]
 use tempfile::tempdir;
 
 #[cfg(feature = "lex")]
@@ -50,12 +56,14 @@ async fn put_then_top_n_returns_hit() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "lex")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Doc {
     id: String,
     body: String,
 }
 
+#[cfg(feature = "lex")]
 impl Embed for Doc {
     fn embed(&self, embedder: &mut rig::embeddings::TextEmbedder) -> Result<(), EmbedError> {
         embedder.embed(self.body.clone());
