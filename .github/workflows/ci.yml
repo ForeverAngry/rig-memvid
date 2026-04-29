@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "default"
+          - "vec"
+          - "api_embed"
+          - "vec,api_embed"
+          - "temporal"
+          - "encryption"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-${{ matrix.features }}
+      - name: clippy
+        run: |
+          if [ "${{ matrix.features }}" = "default" ]; then
+            cargo clippy --all-targets -- -D warnings
+          else
+            cargo clippy --no-default-features --features "lex,${{ matrix.features }}" --all-targets -- -D warnings
+          fi
+
+  test:
+    name: test (${{ matrix.os }} / ${{ matrix.features }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        features:
+          - "default"
+          - "no-default"
+          - "vec"
+          - "api_embed"
+        exclude:
+          # `vec` pulls ort/onnxruntime which is fragile on Windows runners;
+          # exercise it on Linux + macOS instead.
+          - os: windows-latest
+            features: "vec"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-${{ matrix.os }}-${{ matrix.features }}
+      - name: build & test
+        shell: bash
+        run: |
+          case "${{ matrix.features }}" in
+            default)    cargo test --all-targets ;;
+            no-default) cargo test --no-default-features --all-targets ;;
+            vec)        cargo test --no-default-features --features "lex,vec" --all-targets ;;
+            api_embed)  cargo test --no-default-features --features "lex,api_embed" --all-targets ;;
+          esac
+
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+      - run: cargo build --all-targets
+
+  semantic:
+    name: vec semantic search (ignored test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: semantic
+      - name: cache BGE-small ONNX model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/memvid/text-models
+          key: bge-small-en-v1.5-v1
+      - name: download model & tokenizer
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.cache/memvid/text-models
+          cd ~/.cache/memvid/text-models
+          if [ ! -f bge-small-en-v1.5.onnx ]; then
+            curl -L --fail \
+              https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/onnx/model.onnx \
+              -o bge-small-en-v1.5.onnx
+          fi
+          if [ ! -f bge-small-en-v1.5_tokenizer.json ]; then
+            curl -L --fail \
+              https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main/tokenizer.json \
+              -o bge-small-en-v1.5_tokenizer.json
+          fi
+          ls -lh
+      - name: run ignored semantic test
+        run: cargo test --no-default-features --features "lex,vec" -- --ignored vec_semantic_search
+
+  publish-dry-run:
+    name: cargo publish --dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: publish
+      - run: cargo publish --dry-run

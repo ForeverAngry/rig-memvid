@@ -29,6 +29,59 @@ use rig::vector_store::VectorStoreIndex;
 use rig::vector_store::request::VectorSearchRequest;
 use rig_memvid::{MemoryConfig, MemvidPersistHook, MemvidStore, WritePolicy};
 
+/// Best-effort listing of models served by the Ollama daemon at `base_url`.
+/// Returns `None` if the daemon is unreachable.
+async fn served_models(base_url: &str) -> Option<Vec<String>> {
+    #[derive(serde::Deserialize)]
+    struct Tag {
+        name: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Tags {
+        models: Vec<Tag>,
+    }
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+    let resp = reqwest::Client::new().get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let tags: Tags = resp.json().await.ok()?;
+    Some(tags.models.into_iter().map(|t| t.name).collect())
+}
+
+/// Resolve the model to use against the daemon at `base_url`:
+///   1. honour `requested` if the daemon serves it
+///   2. otherwise fall back to the first served model
+///   3. otherwise return `requested` and let the provider error out
+async fn resolve_model(base_url: &str, requested: &str) -> String {
+    let Some(installed) = served_models(base_url).await else {
+        eprintln!(
+            "[warn] could not reach Ollama at {base_url}. \
+             Is `ollama serve` running?"
+        );
+        return requested.to_string();
+    };
+    if installed.iter().any(|m| m == requested) {
+        return requested.to_string();
+    }
+    if let Some(first) = installed.first() {
+        eprintln!(
+            "[warn] requested model `{requested}` is not served by {base_url}; \
+             falling back to `{first}`"
+        );
+        eprintln!(
+            "       installed: {}\n       run `ollama pull {requested}` to use the requested one.",
+            installed.join(", ")
+        );
+        return first.clone();
+    }
+    eprintln!(
+        "[warn] no models are served by {base_url}. \
+         Run e.g. `ollama pull {requested}` first."
+    );
+    requested.to_string()
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let path = PathBuf::from("chatbot_memory_ollama.mv2");
@@ -39,8 +92,9 @@ async fn main() -> Result<()> {
 
     let base_url = std::env::var("OLLAMA_API_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:11434".to_string());
-    let model_name =
-        std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen2.5-coder:3b-instruct".to_string());
+    let requested = std::env::var("OLLAMA_MODEL")
+        .unwrap_or_else(|_| "qwen2.5-coder:3b-instruct".to_string());
+    let model_name = resolve_model(&base_url, &requested).await;
 
     println!("Using Ollama at {base_url} with model `{model_name}`");
 
