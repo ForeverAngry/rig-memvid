@@ -38,6 +38,9 @@ pub struct MemvidStore {
     inner: Arc<Mutex<Memvid>>,
     #[cfg(feature = "vec")]
     embedder: Option<Arc<LocalTextEmbedder>>,
+    /// Default `snippet_chars` applied to [`VectorStoreIndex`] queries.
+    /// Configurable via [`MemvidStoreBuilder::snippet_chars`].
+    snippet_chars: usize,
 }
 
 impl std::fmt::Debug for MemvidStore {
@@ -53,7 +56,18 @@ impl MemvidStore {
             inner: Arc::new(Mutex::new(memvid)),
             #[cfg(feature = "vec")]
             embedder: None,
+            snippet_chars: DEFAULT_SNIPPET_CHARS,
         }
+    }
+
+    /// Number of frames currently stored in the underlying `.mv2` file.
+    pub fn frame_count(&self) -> Result<usize, MemvidError> {
+        Ok(self.lock()?.frame_count())
+    }
+
+    /// Aggregate statistics for the underlying memory.
+    pub fn stats(&self) -> Result<memvid_core::types::frame::Stats, MemvidError> {
+        Ok(self.lock()?.stats()?)
     }
 
     /// Begin building a new store. See [`MemvidStoreBuilder`].
@@ -153,6 +167,7 @@ impl MemvidStore {
 pub struct MemvidStoreBuilder {
     path: Option<PathBuf>,
     enable_lex: bool,
+    snippet_chars: Option<usize>,
     #[cfg(feature = "vec")]
     enable_vec: bool,
     #[cfg(feature = "vec")]
@@ -186,6 +201,16 @@ impl MemvidStoreBuilder {
     /// Enable BM25 / Tantivy lexical search on the underlying archive.
     pub fn enable_lex(mut self) -> Self {
         self.enable_lex = true;
+        self
+    }
+
+    /// Number of context characters to capture around each search hit.
+    /// Defaults to [`DEFAULT_SNIPPET_CHARS`]. Applies to queries issued
+    /// via [`VectorStoreIndex::top_n`] and the `vec` search path; callers
+    /// who need per-query control should use [`MemvidStore::search`]
+    /// directly with a hand-built [`SearchRequest`].
+    pub fn snippet_chars(mut self, n: usize) -> Self {
+        self.snippet_chars = Some(n);
         self
     }
 
@@ -270,6 +295,9 @@ impl MemvidStoreBuilder {
         }
         #[cfg_attr(not(feature = "vec"), allow(unused_mut))]
         let mut store = MemvidStore::from_memvid(memvid);
+        if let Some(s) = self.snippet_chars {
+            store.snippet_chars = s;
+        }
         #[cfg(feature = "vec")]
         {
             store.embedder = self.embedder;
@@ -458,6 +486,7 @@ const DEFAULT_SNIPPET_CHARS: usize = 400;
 fn build_search_request(
     query: String,
     samples: u64,
+    snippet_chars: usize,
     filter: Option<MemvidFilter>,
 ) -> Result<SearchRequest, MemvidError> {
     let filter = match filter {
@@ -467,7 +496,7 @@ fn build_search_request(
     let mut req = SearchRequest {
         query,
         top_k: usize::try_from(samples).unwrap_or(usize::MAX),
-        snippet_chars: DEFAULT_SNIPPET_CHARS,
+        snippet_chars,
         uri: None,
         scope: None,
         cursor: None,
@@ -531,7 +560,7 @@ impl MemvidStore {
             query,
             &embedding,
             top_k,
-            DEFAULT_SNIPPET_CHARS,
+            self.snippet_chars,
             filter.scope.as_deref(),
         )?;
         Ok(resp)
@@ -541,6 +570,14 @@ impl MemvidStore {
 impl VectorStoreIndex for MemvidStore {
     type Filter = MemvidFilter;
 
+    /// Run a search and deserialise each hit's JSON representation into `T`.
+    ///
+    /// **Contract:** the type `T` must be deserialisable from a
+    /// [`SearchHit`] JSON object (i.e. either `T = SearchHit` or a struct
+    /// whose fields are a subset of `SearchHit`'s, e.g.
+    /// `{frame_id, snippet, score, ...}`). Round-tripping arbitrary user
+    /// payloads is not supported here — use
+    /// [`MemvidStore::search`] for raw access.
     async fn top_n<T>(
         &self,
         req: VectorSearchRequest<Self::Filter>,
@@ -562,8 +599,8 @@ impl VectorStoreIndex for MemvidStore {
             self.vec_search(&query, samples, &validated)
                 .map_err(VectorStoreError::from)?
         } else {
-            let request =
-                build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
+            let request = build_search_request(query, samples, self.snippet_chars, filter)
+                .map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -572,8 +609,8 @@ impl VectorStoreIndex for MemvidStore {
         };
         #[cfg(not(feature = "vec"))]
         let response = {
-            let request =
-                build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
+            let request = build_search_request(query, samples, self.snippet_chars, filter)
+                .map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -610,8 +647,8 @@ impl VectorStoreIndex for MemvidStore {
             self.vec_search(&query, samples, &validated)
                 .map_err(VectorStoreError::from)?
         } else {
-            let request =
-                build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
+            let request = build_search_request(query, samples, self.snippet_chars, filter)
+                .map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -620,8 +657,8 @@ impl VectorStoreIndex for MemvidStore {
         };
         #[cfg(not(feature = "vec"))]
         let response = {
-            let request =
-                build_search_request(query, samples, filter).map_err(VectorStoreError::from)?;
+            let request = build_search_request(query, samples, self.snippet_chars, filter)
+                .map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -638,6 +675,14 @@ impl VectorStoreIndex for MemvidStore {
 }
 
 impl InsertDocuments for MemvidStore {
+    /// Persist `documents` into the underlying `.mv2` file.
+    ///
+    /// **Note:** caller-supplied embeddings are intentionally ignored.
+    /// On the lex-only path the document JSON is written as bytes and
+    /// embeddings are dropped. When this store is configured with a
+    /// local embedder (`vec` feature) every document is **re-embedded**
+    /// with that model so memvid's vector index stays consistent with its
+    /// bound model identifier.
     async fn insert_documents<Doc>(
         &self,
         documents: Vec<(Doc, OneOrMany<Embedding>)>,
