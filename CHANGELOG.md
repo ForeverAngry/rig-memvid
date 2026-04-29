@@ -2,6 +2,27 @@
 
 All notable changes to `rig-memvid` will be documented in this file.
 
+## [0.1.1](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.0...v0.1.1) - 2026-04-29
+
+### Added
+
+- Granular error mapping, cursor/no_sketch filters, ACL pass-through
+- *(store)* Configurable snippet_chars, frame_count/stats accessors
+- Add reqwest dependency and examples for inspecting memory and running chatbot with Ollama
+
+### CI
+
+- Fix CI matrix and bump MSRV to 1.88
+- Add release-plz semver automation
+
+### Fixed
+
+- Gate lex smoke tests behind `lex` feature
+
+### Tests
+
+- Add integration test suite covering filters, lifecycle, errors
+
 ## [0.1.0] - Unreleased
 
 ### Added
