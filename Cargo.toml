@@ -12,7 +12,7 @@ keywords = ["rig", "memvid", "ai", "agent", "memory"]
 categories = ["text-processing", "database"]
 
 [dependencies]
-rig-core = { version = "0.35.0", default-features = false }
+rig-core = { version = "0.36.0", default-features = false }
 memvid-core = { version = "2.0.139", default-features = false }
 thiserror = "2.0.12"
 serde = { version = "1.0.219", features = ["derive"] }

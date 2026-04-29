@@ -73,7 +73,7 @@ When an embedder is attached:
 
 | `rig-memvid` | `rig-core` | `memvid-core` |
 | ------------ | ---------- | ------------- |
-| `0.1`        | `0.35`     | `2.0`         |
+| `0.1`        | `0.36`     | `2.0`         |
 
 This crate is community-maintained and not affiliated with the `rig` project.
 

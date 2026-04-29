@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
         .enable_lex()
         .open_or_create()?;
 
-    let client = openai::Client::from_env();
+    let client = openai::Client::from_env()?;
     let model = client.completion_model(GPT_4O_MINI);
 
     let hook = MemvidPersistHook::new(

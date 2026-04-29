@@ -34,7 +34,7 @@ async fn put_then_top_n_returns_hit() -> Result<()> {
         VectorSearchRequestBuilder::<MemvidFilter>::default()
             .query("Tower of London")
             .samples(5)
-            .build()?;
+            .build();
 
     let hits: Vec<(f64, String, serde_json::Value)> = store.top_n(req).await?;
     assert!(!hits.is_empty(), "expected at least one hit for lex search");
@@ -97,7 +97,7 @@ async fn insert_documents_then_top_n_ids() -> Result<()> {
         VectorSearchRequestBuilder::<MemvidFilter>::default()
             .query("Rust library")
             .samples(1)
-            .build()?;
+            .build();
 
     let ids = store.top_n_ids(req).await?;
     assert_eq!(ids.len(), 1, "expected exactly one hit");
@@ -106,7 +106,7 @@ async fn insert_documents_then_top_n_ids() -> Result<()> {
         VectorSearchRequestBuilder::<MemvidFilter>::default()
             .query("Rust library")
             .samples(1)
-            .build()?;
+            .build();
     let hits: Vec<(f64, String, serde_json::Value)> = store.top_n(req).await?;
     assert_eq!(hits.len(), 1);
     let payload = hits
@@ -164,7 +164,7 @@ async fn vec_semantic_search_finds_paraphrase() -> Result<()> {
         VectorSearchRequestBuilder::<MemvidFilter>::default()
             .query("how do leaves make food from light")
             .samples(2)
-            .build()?;
+            .build();
 
     let hits: Vec<(f64, String, serde_json::Value)> = store.top_n(req).await?;
     assert!(!hits.is_empty(), "expected at least one vector hit");

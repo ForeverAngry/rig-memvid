@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
     let req = VectorSearchRequest::builder()
         .query(prompt2)
         .samples(4)
-        .build()?;
+        .build();
     let hits = store.top_n::<serde_json::Value>(req).await?;
     println!("\n[retrieval preview for turn 2 — query={prompt2:?}]");
     for (score, id, _doc) in &hits {
