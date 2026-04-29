@@ -3,9 +3,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use memvid_core::{AclContext, AclEnforcementMode, Memvid, PutOptions, SearchHit, SearchRequest};
 #[cfg(feature = "vec")]
 use memvid_core::{LocalTextEmbedder, TextEmbedConfig};
-use memvid_core::{Memvid, PutOptions, SearchHit, SearchRequest};
 use rig::{
     Embed, OneOrMany,
     embeddings::Embedding,
@@ -26,6 +26,15 @@ use crate::error::MemvidError;
 /// every clone) and can be both read from and written to concurrently from
 /// multiple async tasks. Writes are serialised through the inner mutex.
 ///
+/// ## Concurrency
+///
+/// Every public method on the underlying [`Memvid`] handle — including
+/// `search`, `vec_search_with_embedding`, `frame_count`, and the various
+/// `put_*` writers — takes `&mut self`. Reads cannot run in parallel with
+/// other reads, so the inner lock is a [`Mutex`] rather than an
+/// `RwLock`. Workloads that require concurrent reads should open separate
+/// read-only handles via [`MemvidStoreBuilder::open_read_only`].
+///
 /// Unlike most rig vector stores, `MemvidStore` is **not** parameterised over
 /// an [`EmbeddingModel`]: memvid embeds queries internally using whichever
 /// engine its file is configured with (BM25/Tantivy when the `lex` feature is
@@ -41,6 +50,11 @@ pub struct MemvidStore {
     /// Default `snippet_chars` applied to [`VectorStoreIndex`] queries.
     /// Configurable via [`MemvidStoreBuilder::snippet_chars`].
     snippet_chars: usize,
+    /// Default ACL context applied to every search. `None` means no ACL
+    /// filtering. Configurable via [`MemvidStoreBuilder::acl_context`].
+    acl_context: Option<AclContext>,
+    /// ACL enforcement mode (`Audit` or `Enforce`).
+    acl_enforcement_mode: AclEnforcementMode,
 }
 
 impl std::fmt::Debug for MemvidStore {
@@ -57,6 +71,8 @@ impl MemvidStore {
             #[cfg(feature = "vec")]
             embedder: None,
             snippet_chars: DEFAULT_SNIPPET_CHARS,
+            acl_context: None,
+            acl_enforcement_mode: AclEnforcementMode::default(),
         }
     }
 
@@ -168,6 +184,8 @@ pub struct MemvidStoreBuilder {
     path: Option<PathBuf>,
     enable_lex: bool,
     snippet_chars: Option<usize>,
+    acl_context: Option<AclContext>,
+    acl_enforcement_mode: Option<AclEnforcementMode>,
     #[cfg(feature = "vec")]
     enable_vec: bool,
     #[cfg(feature = "vec")]
@@ -211,6 +229,21 @@ impl MemvidStoreBuilder {
     /// directly with a hand-built [`SearchRequest`].
     pub fn snippet_chars(mut self, n: usize) -> Self {
         self.snippet_chars = Some(n);
+        self
+    }
+
+    /// Default [`AclContext`] attached to every search performed through
+    /// the [`VectorStoreIndex`] / vector-search interfaces. When unset,
+    /// ACL filtering is disabled.
+    pub fn acl_context(mut self, ctx: AclContext) -> Self {
+        self.acl_context = Some(ctx);
+        self
+    }
+
+    /// ACL enforcement mode for default-attached contexts. Defaults to
+    /// [`AclEnforcementMode::Audit`].
+    pub fn acl_enforcement_mode(mut self, mode: AclEnforcementMode) -> Self {
+        self.acl_enforcement_mode = Some(mode);
         self
     }
 
@@ -298,6 +331,12 @@ impl MemvidStoreBuilder {
         if let Some(s) = self.snippet_chars {
             store.snippet_chars = s;
         }
+        if let Some(ctx) = self.acl_context {
+            store.acl_context = Some(ctx);
+        }
+        if let Some(mode) = self.acl_enforcement_mode {
+            store.acl_enforcement_mode = mode;
+        }
         #[cfg(feature = "vec")]
         {
             store.embedder = self.embedder;
@@ -341,15 +380,17 @@ impl MemvidStoreBuilder {
 /// A filter clause supported by [`MemvidStore`].
 ///
 /// Memvid's query model does not support arbitrary boolean predicates;
-/// this filter only carries the four restriction parameters that map onto
+/// this filter only carries the restriction parameters that map onto
 /// fields of [`SearchRequest`]:
 ///
-/// | Predicate                       | Effect on the search request  |
-/// | ------------------------------- | ----------------------------- |
-/// | `eq("uri", "...")`              | `request.uri = Some(value)`   |
-/// | `eq("scope", "...")`            | `request.scope = Some(value)` |
-/// | `eq("as_of_frame", n)`          | `request.as_of_frame`         |
-/// | `eq("as_of_ts", n)`             | `request.as_of_ts`            |
+/// | Predicate                       | Effect on the search request    |
+/// | ------------------------------- | ------------------------------- |
+/// | `eq("uri", "...")`              | `request.uri = Some(value)`     |
+/// | `eq("scope", "...")`            | `request.scope = Some(value)`   |
+/// | `eq("as_of_frame", n)`          | `request.as_of_frame`           |
+/// | `eq("as_of_ts", n)`             | `request.as_of_ts`              |
+/// | `eq("cursor", "...")`           | `request.cursor` (pagination)   |
+/// | `eq("no_sketch", true/false)`   | disable sketch pre-filtering    |
 ///
 /// `gt`, `lt`, and `or` are not representable; constructing such a filter
 /// produces an error at query time
@@ -364,6 +405,12 @@ pub struct MemvidFilter {
     pub as_of_frame: Option<u64>,
     /// Optional point-in-time unix-millis timestamp.
     pub as_of_ts: Option<i64>,
+    /// Optional pagination cursor (opaque token returned by a prior search).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    /// If `Some(true)`, disable the sketch pre-filter for this query.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_sketch: Option<bool>,
     /// Reasons this filter cannot be applied. Populated when the user calls
     /// `gt`, `lt`, `or`, or `eq` with an unknown key.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -391,6 +438,12 @@ impl MemvidFilter {
         if rhs.as_of_ts.is_some() {
             self.as_of_ts = rhs.as_of_ts;
         }
+        if rhs.cursor.is_some() {
+            self.cursor = rhs.cursor;
+        }
+        if rhs.no_sketch.is_some() {
+            self.no_sketch = rhs.no_sketch;
+        }
         self.invalid.extend(rhs.invalid);
         self
     }
@@ -408,6 +461,12 @@ impl MemvidFilter {
         request.scope = self.scope;
         request.as_of_frame = self.as_of_frame;
         request.as_of_ts = self.as_of_ts;
+        if let Some(c) = self.cursor {
+            request.cursor = Some(c);
+        }
+        if let Some(b) = self.no_sketch {
+            request.no_sketch = b;
+        }
     }
 }
 
@@ -446,8 +505,20 @@ impl SearchFilter for MemvidFilter {
                 },
                 None => Self::unsupported(format!("as_of_ts must be an i64, got {value}")),
             },
+            "cursor" => Self {
+                cursor: json_as_string(&value),
+                ..Self::default()
+            },
+            "no_sketch" => match value.as_bool() {
+                Some(b) => Self {
+                    no_sketch: Some(b),
+                    ..Self::default()
+                },
+                None => Self::unsupported(format!("no_sketch must be a bool, got {value}")),
+            },
             other => Self::unsupported(format!(
-                "unsupported filter key '{other}' (allowed: uri, scope, as_of_frame, as_of_ts)"
+                "unsupported filter key '{other}' (allowed: uri, scope, as_of_frame, as_of_ts, \
+                 cursor, no_sketch)"
             )),
         }
     }
@@ -488,6 +559,8 @@ fn build_search_request(
     samples: u64,
     snippet_chars: usize,
     filter: Option<MemvidFilter>,
+    acl_context: Option<AclContext>,
+    acl_enforcement_mode: AclEnforcementMode,
 ) -> Result<SearchRequest, MemvidError> {
     let filter = match filter {
         Some(f) => f.into_validated()?,
@@ -505,8 +578,8 @@ fn build_search_request(
         as_of_frame: None,
         as_of_ts: None,
         no_sketch: false,
-        acl_context: None,
-        acl_enforcement_mode: memvid_core::AclEnforcementMode::default(),
+        acl_context,
+        acl_enforcement_mode,
     };
     filter.apply_to(&mut req);
     Ok(req)
@@ -556,13 +629,25 @@ impl MemvidStore {
         let embedding = embedder.encode_text(query)?;
         let top_k = usize::try_from(samples).unwrap_or(usize::MAX);
         let mut guard = self.lock()?;
-        let resp = guard.vec_search_with_embedding(
-            query,
-            &embedding,
-            top_k,
-            self.snippet_chars,
-            filter.scope.as_deref(),
-        )?;
+        let resp = if self.acl_context.is_some() {
+            guard.vec_search_with_embedding_acl(
+                query,
+                &embedding,
+                top_k,
+                self.snippet_chars,
+                filter.scope.as_deref(),
+                self.acl_context.as_ref(),
+                self.acl_enforcement_mode,
+            )?
+        } else {
+            guard.vec_search_with_embedding(
+                query,
+                &embedding,
+                top_k,
+                self.snippet_chars,
+                filter.scope.as_deref(),
+            )?
+        };
         Ok(resp)
     }
 }
@@ -599,8 +684,15 @@ impl VectorStoreIndex for MemvidStore {
             self.vec_search(&query, samples, &validated)
                 .map_err(VectorStoreError::from)?
         } else {
-            let request = build_search_request(query, samples, self.snippet_chars, filter)
-                .map_err(VectorStoreError::from)?;
+            let request = build_search_request(
+                query,
+                samples,
+                self.snippet_chars,
+                filter,
+                self.acl_context.clone(),
+                self.acl_enforcement_mode,
+            )
+            .map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -609,8 +701,15 @@ impl VectorStoreIndex for MemvidStore {
         };
         #[cfg(not(feature = "vec"))]
         let response = {
-            let request = build_search_request(query, samples, self.snippet_chars, filter)
-                .map_err(VectorStoreError::from)?;
+            let request = build_search_request(
+                query,
+                samples,
+                self.snippet_chars,
+                filter,
+                self.acl_context.clone(),
+                self.acl_enforcement_mode,
+            )
+            .map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -647,8 +746,15 @@ impl VectorStoreIndex for MemvidStore {
             self.vec_search(&query, samples, &validated)
                 .map_err(VectorStoreError::from)?
         } else {
-            let request = build_search_request(query, samples, self.snippet_chars, filter)
-                .map_err(VectorStoreError::from)?;
+            let request = build_search_request(
+                query,
+                samples,
+                self.snippet_chars,
+                filter,
+                self.acl_context.clone(),
+                self.acl_enforcement_mode,
+            )
+            .map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()
@@ -657,8 +763,15 @@ impl VectorStoreIndex for MemvidStore {
         };
         #[cfg(not(feature = "vec"))]
         let response = {
-            let request = build_search_request(query, samples, self.snippet_chars, filter)
-                .map_err(VectorStoreError::from)?;
+            let request = build_search_request(
+                query,
+                samples,
+                self.snippet_chars,
+                filter,
+                self.acl_context.clone(),
+                self.acl_enforcement_mode,
+            )
+            .map_err(VectorStoreError::from)?;
             let mut guard = self
                 .inner
                 .lock()

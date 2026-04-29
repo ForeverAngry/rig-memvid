@@ -1,6 +1,6 @@
 //! Error types for `rig-memvid`.
 
-use rig::vector_store::VectorStoreError;
+use rig::vector_store::{VectorStoreError, request::FilterError};
 
 /// Errors produced by `rig-memvid`.
 #[derive(Debug, thiserror::Error)]
@@ -30,7 +30,16 @@ pub enum MemvidError {
 }
 
 impl From<MemvidError> for VectorStoreError {
+    /// Map a [`MemvidError`] onto the closest [`VectorStoreError`] variant
+    /// so rig consumers can inspect failures without downcasting through
+    /// the generic `DatastoreError` boxed trait object.
     fn from(err: MemvidError) -> Self {
-        VectorStoreError::DatastoreError(Box::new(err))
+        match err {
+            MemvidError::Serde(e) => VectorStoreError::JsonError(e),
+            MemvidError::UnsupportedFilter(msg) => {
+                VectorStoreError::FilterError(FilterError::TypeError(msg))
+            }
+            other => VectorStoreError::DatastoreError(Box::new(other)),
+        }
     }
 }
