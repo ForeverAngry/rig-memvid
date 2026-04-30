@@ -4,6 +4,17 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.1...v0.1.2) - 2026-04-30
+
+### Changed
+
+- *(store)* Extract run_search; add samples cap, safer casts, doc contract
+
+### Documentation
+
+- Add Copilot/AGENTS instructions and scoped test/example rules
+- Add Copilot instructions for rig-memvid project
+
 ### Changed
 
 - `MemvidPersistHook` now writes the configured `MemoryConfig.scope` into
