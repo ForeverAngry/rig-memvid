@@ -1,8 +1,12 @@
 //! End-to-end smoke test for `MemvidStore` against a real memvid archive.
 #![allow(clippy::panic_in_result_fn)]
 
+mod common;
+
 #[cfg(feature = "lex")]
 use anyhow::Result;
+#[cfg(feature = "lex")]
+use common::lex_store;
 #[cfg(feature = "lex")]
 use memvid_core::PutOptions;
 #[cfg(feature = "lex")]
@@ -14,7 +18,9 @@ use rig::{
     },
 };
 #[cfg(feature = "lex")]
-use rig_memvid::{MemvidFilter, MemvidStore};
+use rig_memvid::MemvidFilter;
+#[cfg(feature = "vec")]
+use rig_memvid::MemvidStore;
 #[cfg(feature = "lex")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "lex")]
@@ -26,7 +32,7 @@ async fn put_then_top_n_returns_hit() -> Result<()> {
     let dir = tempdir()?;
     let path = dir.path().join("test.mv2");
 
-    let store = MemvidStore::builder().path(&path).enable_lex().create()?;
+    let store = lex_store(&path)?;
 
     store.put_text(
         "The Tower of London was founded by William the Conqueror in 1066.",
@@ -76,7 +82,7 @@ impl Embed for Doc {
 async fn insert_documents_then_top_n_ids() -> Result<()> {
     let dir = tempdir()?;
     let path = dir.path().join("rig.mv2");
-    let store = MemvidStore::builder().path(&path).enable_lex().create()?;
+    let store = lex_store(&path)?;
 
     let docs = vec![
         (

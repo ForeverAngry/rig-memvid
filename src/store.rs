@@ -35,6 +35,11 @@ use crate::error::MemvidError;
 /// `RwLock`. Workloads that require concurrent reads should open separate
 /// read-only handles via [`MemvidStoreBuilder::open_read_only`].
 ///
+/// The lock is [`std::sync::Mutex`] (not `tokio::sync::Mutex`): the crate
+/// is intentionally runtime-agnostic and the clippy `await_holding_lock`
+/// lint enforces that no `.await` ever happens while a guard is live. Every
+/// guard in this module is scope-dropped before any async boundary.
+///
 /// Unlike most rig vector stores, `MemvidStore` is **not** parameterised over
 /// an [`EmbeddingModel`]: memvid embeds queries internally using whichever
 /// engine its file is configured with (BM25/Tantivy when the `lex` feature is
@@ -564,9 +569,13 @@ impl SearchFilter for MemvidFilter {
         self.merge(rhs)
     }
 
-    fn or(self, rhs: Self) -> Self {
-        self.merge(rhs)
-            .merge(Self::unsupported("memvid does not support or() in filters"))
+    fn or(self, _rhs: Self) -> Self {
+        // Memvid's filter model is a flat conjunction; representing a true
+        // disjunction would require widening the search request. Discard
+        // both operands and return a bare unsupported marker — the
+        // resulting filter is rejected by `into_validated()` regardless.
+        let _ = self;
+        Self::unsupported("memvid does not support or() in filters")
     }
 }
 

@@ -33,6 +33,11 @@ All notable changes to `rig-memvid` will be documented in this file.
 - Stricter UTF-8 handling in `InsertDocuments` (no silent fallback to the
   empty string when embedding).
 - Safer rank-derived score computation (no lossy `usize as f64` cast).
+- Simplified `MemvidFilter::or` to discard merged operands (the resulting
+  filter is rejected at validation time anyway).
+- Shared `tests/common/mod.rs` helper for lex-store bring-up.
+- `wasm` targets now emit a `compile_error!` with a clear message instead
+  of an empty crate body.
 
 ### Tests
 

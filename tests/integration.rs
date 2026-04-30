@@ -7,8 +7,12 @@
     clippy::io_other_error
 )]
 
+mod common;
+
 #[cfg(feature = "lex")]
 use anyhow::Result;
+#[cfg(feature = "lex")]
+use common::lex_store;
 #[cfg(feature = "lex")]
 use memvid_core::{AclContext, AclEnforcementMode, PutOptions, SearchRequest};
 #[cfg(feature = "lex")]
@@ -22,11 +26,6 @@ use rig_memvid::{MemvidError, MemvidFilter, MemvidStore};
 use serde_json::json;
 #[cfg(feature = "lex")]
 use tempfile::tempdir;
-
-#[cfg(feature = "lex")]
-fn lex_store(path: &std::path::Path) -> Result<MemvidStore> {
-    Ok(MemvidStore::builder().path(path).enable_lex().create()?)
-}
 
 // --- MemvidFilter -----------------------------------------------------------
 

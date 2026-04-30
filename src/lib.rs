@@ -12,16 +12,44 @@
 //! Sharing a single [`MemvidStore`] between recall and persistence is the
 //! intended pattern: writes through the hook are visible to subsequent
 //! searches in the same process.
+//!
+//! # Re-exports
+//!
+//! [`memvid_core`] is re-exported so callers do not need to add it as a
+//! direct dependency to construct [`memvid_core::PutOptions`],
+//! [`memvid_core::AclContext`], or [`memvid_core::SearchRequest`] when
+//! reaching for [`MemvidStore::search`] / [`MemvidStore::put_text`].
+//!
+//! # Platform support
+//!
+//! The crate is `cfg`-gated off on `wasm`: memvid relies on synchronous
+//! file I/O and a process-level file lock that have no analogue under
+//! `wasm32-unknown-unknown`. On wasm targets the crate is intentionally
+//! empty so that downstream crates can still depend on it transitively
+//! without a build break.
 
-#![cfg(not(target_family = "wasm"))]
-#![deny(missing_docs)]
+#![cfg_attr(not(target_family = "wasm"), deny(missing_docs))]
 
+#[cfg(target_family = "wasm")]
+compile_error!(
+    "rig-memvid does not currently support `wasm` targets: memvid-core requires \
+     synchronous file I/O and OS-level file locks. Disable rig-memvid for wasm \
+     builds via Cargo target-specific dependencies."
+);
+
+#[cfg(not(target_family = "wasm"))]
 mod error;
+#[cfg(not(target_family = "wasm"))]
 mod hook;
+#[cfg(not(target_family = "wasm"))]
 mod store;
 
+#[cfg(not(target_family = "wasm"))]
 pub use error::MemvidError;
+#[cfg(not(target_family = "wasm"))]
 pub use hook::{MemoryConfig, MemvidPersistHook, WritePolicy, WriteTransform};
+#[cfg(not(target_family = "wasm"))]
 pub use store::{MemvidFilter, MemvidStore, MemvidStoreBuilder};
 
+#[cfg(not(target_family = "wasm"))]
 pub use memvid_core;
