@@ -84,6 +84,15 @@ async fn resolve_model(base_url: &str, requested: &str) -> String {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Surface library `tracing` warnings (e.g. failed persist writes from
+    // the hook) on stderr. Set `RUST_LOG=rig_memvid=debug` to see more.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("rig_memvid=warn")),
+        )
+        .try_init();
+
     let path = PathBuf::from("chatbot_memory_ollama.mv2");
     let store = MemvidStore::builder()
         .path(&path)

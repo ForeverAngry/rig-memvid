@@ -14,6 +14,9 @@ use crate::store::MemvidStore;
 
 /// A function that decides what (if anything) to persist for a single
 /// message. Returning `None` skips the message.
+///
+/// Returning `Some("")` is treated identically to `None`: empty payloads
+/// are never written to the archive.
 pub type WriteTransform = Arc<dyn Fn(&Message) -> Option<String> + Send + Sync + 'static>;
 
 /// Strategy for what to write into the memvid archive on each turn.
@@ -54,9 +57,10 @@ pub struct MemoryConfig {
     pub commit_each_turn: bool,
     /// Tags applied to every persisted frame, useful for later filtering.
     pub default_tags: Vec<String>,
-    /// Logical scope written into [`PutOptions::scope`-equivalent metadata]
-    /// (`extra_metadata["scope"]`). When set, queries that filter by `scope`
-    /// will narrow to frames written through this hook.
+    /// Logical scope written into the frame's URI prefix. When set, every
+    /// frame produced by this hook is stored with `PutOptions.uri = Some(scope)`,
+    /// which makes [`crate::MemvidFilter::eq`]`("scope", scope)` match those
+    /// frames at query time (memvid's `scope` is a URI prefix filter).
     pub scope: Option<String>,
 }
 
@@ -132,6 +136,11 @@ impl<M> MemvidPersistHook<M> {
         opts.extra_metadata
             .insert("chat_role".into(), chat_role.into());
         if let Some(scope) = self.config.scope.as_deref() {
+            // Memvid's `scope` search filter matches against frame URIs by
+            // prefix, so attach the scope as the URI. Also stash it under
+            // `extra_metadata["scope"]` for ergonomic introspection by
+            // tools that walk frames directly.
+            opts.uri = Some(scope.to_string());
             opts.extra_metadata.insert("scope".into(), scope.into());
         }
         opts

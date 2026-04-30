@@ -377,3 +377,88 @@ async fn insert_documents_ignores_caller_embedding_dimension() -> Result<()> {
     assert_eq!(ids.len(), 1, "expected exactly one hit");
     Ok(())
 }
+
+// --- New behaviours from the v0.1.2 review ----------------------------------
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn scope_filter_matches_frames_written_with_scoped_uri() -> Result<()> {
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("scope.mv2"))?;
+
+    let scoped = PutOptions {
+        uri: Some("chatbot/session-a".into()),
+        ..PutOptions::default()
+    };
+    let other = PutOptions {
+        uri: Some("notes/session-b".into()),
+        ..PutOptions::default()
+    };
+    store.put_text("scoped-token-aaa", scoped)?;
+    store.put_text("scoped-token-bbb", other)?;
+
+    let req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("scoped-token")
+            .samples(10)
+            .filter(MemvidFilter::eq("scope", json!("chatbot")))
+            .build();
+    let hits: Vec<(f64, String, serde_json::Value)> = store.top_n(req).await?;
+    assert!(!hits.is_empty(), "expected scope-filtered hits");
+    for (_, _, v) in &hits {
+        let uri = v.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            uri.starts_with("chatbot"),
+            "scope filter should restrict to chatbot/* URIs, got {uri}"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn samples_above_cap_does_not_panic() -> Result<()> {
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("cap.mv2"))?;
+    store.put_text("alpha", PutOptions::default())?;
+
+    let req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("alpha")
+            .samples(u64::MAX)
+            .build();
+    let _ids = store.top_n_ids(req).await?;
+    Ok(())
+}
+
+#[cfg(feature = "lex")]
+#[test]
+fn filter_as_of_ts_accepts_integer_valued_float() {
+    let f = MemvidFilter::eq("as_of_ts", json!(1_700_000_000.0_f64));
+    assert_eq!(f.as_of_ts, Some(1_700_000_000));
+}
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn top_n_deserialises_search_hit_directly() -> Result<()> {
+    use memvid_core::SearchHit;
+
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("hit.mv2"))?;
+    store.put_text("zenith-marker-text", PutOptions::default())?;
+
+    let req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("zenith-marker-text")
+            .samples(2)
+            .build();
+    let hits: Vec<(f64, String, SearchHit)> = store.top_n(req).await?;
+    assert!(!hits.is_empty(), "expected at least one SearchHit");
+    let (_, id, hit) = hits.first().expect("hits.first");
+    assert_eq!(*id, hit.frame_id.to_string());
+    assert!(
+        hit.text.contains("zenith") || !hit.text.is_empty(),
+        "expected hit.text to be populated"
+    );
+    Ok(())
+}

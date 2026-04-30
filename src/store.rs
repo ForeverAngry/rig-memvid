@@ -168,6 +168,13 @@ impl MemvidStore {
     /// Run a [`SearchRequest`] directly. Useful for callers that need
     /// memvid-native features (cursors, ACL contexts, etc.) that do not map
     /// onto [`VectorSearchRequest`].
+    ///
+    /// # Concurrency
+    ///
+    /// Acquires the store's inner [`Mutex`] for the duration of the call.
+    /// Do **not** invoke this (or any other `MemvidStore` method) from
+    /// within a [`crate::WriteTransform`] closure: hook writes already hold
+    /// a path through `put_text` and a re-entrant call would deadlock.
     pub fn search(
         &self,
         request: SearchRequest,
@@ -477,6 +484,22 @@ fn json_as_string(value: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Coerce a JSON value into an `i64` for `as_of_ts`.
+///
+/// Accepts integer JSON numbers and integer-valued floats (which is the
+/// default representation for many JSON producers).
+fn as_of_ts_from_value(value: &serde_json::Value) -> Option<i64> {
+    if let Some(n) = value.as_i64() {
+        return Some(n);
+    }
+    let f = value.as_f64()?;
+    if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+        Some(f as i64)
+    } else {
+        None
+    }
+}
+
 impl SearchFilter for MemvidFilter {
     type Value = serde_json::Value;
 
@@ -498,7 +521,7 @@ impl SearchFilter for MemvidFilter {
                 },
                 None => Self::unsupported(format!("as_of_frame must be a u64, got {value}")),
             },
-            "as_of_ts" => match value.as_i64() {
+            "as_of_ts" => match as_of_ts_from_value(&value) {
                 Some(n) => Self {
                     as_of_ts: Some(n),
                     ..Self::default()
@@ -554,6 +577,17 @@ impl SearchFilter for MemvidFilter {
 /// [`SearchRequest`].
 const DEFAULT_SNIPPET_CHARS: usize = 400;
 
+/// Hard cap applied to `samples` (a.k.a. `top_k`) so callers cannot request
+/// `usize::MAX` worth of hits — both as a defensive measure on 32-bit
+/// targets where `u64 -> usize` may saturate, and to keep memvid from
+/// allocating absurdly large result vectors.
+const MAX_SAMPLES: usize = 1024;
+
+fn samples_to_top_k(samples: u64) -> usize {
+    let n = usize::try_from(samples).unwrap_or(MAX_SAMPLES);
+    n.min(MAX_SAMPLES)
+}
+
 fn build_search_request(
     query: String,
     samples: u64,
@@ -568,7 +602,7 @@ fn build_search_request(
     };
     let mut req = SearchRequest {
         query,
-        top_k: usize::try_from(samples).unwrap_or(usize::MAX),
+        top_k: samples_to_top_k(samples),
         snippet_chars,
         uri: None,
         scope: None,
@@ -590,7 +624,12 @@ fn hit_score(hit: &SearchHit) -> f64 {
         Some(s) => f64::from(s),
         // Lexical hits often arrive without a numeric score; fall back to
         // rank-derived order-preserving values so callers can still sort.
-        None => 1.0 / (hit.rank as f64 + 1.0),
+        // `hit.rank` is `usize`; cap at `u32::MAX` before promoting to f64
+        // to avoid lossy `as` casts that clippy would otherwise reject.
+        None => {
+            let rank = u32::try_from(hit.rank).unwrap_or(u32::MAX);
+            1.0 / (f64::from(rank) + 1.0)
+        }
     }
 }
 
@@ -627,7 +666,7 @@ impl MemvidStore {
             .as_ref()
             .ok_or_else(|| MemvidError::UnsupportedFilter("no embedder configured".into()))?;
         let embedding = embedder.encode_text(query)?;
-        let top_k = usize::try_from(samples).unwrap_or(usize::MAX);
+        let top_k = samples_to_top_k(samples);
         let mut guard = self.lock()?;
         let resp = if self.acl_context.is_some() {
             guard.vec_search_with_embedding_acl(
@@ -652,17 +691,79 @@ impl MemvidStore {
     }
 }
 
+impl MemvidStore {
+    /// Internal: dispatch a `VectorSearchRequest` to either the embedder-driven
+    /// vector path (if a local embedder is configured) or the lex/raw search
+    /// path. Centralises the `cfg(feature = "vec")` plumbing so the public
+    /// `VectorStoreIndex` methods stay small and free of duplication.
+    fn run_search(
+        &self,
+        query: String,
+        samples: u64,
+        filter: Option<MemvidFilter>,
+    ) -> Result<memvid_core::SearchResponse, MemvidError> {
+        #[cfg(feature = "vec")]
+        {
+            if self.embedder.is_some() {
+                let validated = match filter {
+                    Some(f) => f.into_validated()?,
+                    None => MemvidFilter::default(),
+                };
+                ensure_vec_filter_supported(&validated)?;
+                return self.vec_search(&query, samples, &validated);
+            }
+        }
+        let request = build_search_request(
+            query,
+            samples,
+            self.snippet_chars,
+            filter,
+            self.acl_context.clone(),
+            self.acl_enforcement_mode,
+        )?;
+        let mut guard = self.lock()?;
+        Ok(guard.search(request)?)
+    }
+}
+
 impl VectorStoreIndex for MemvidStore {
     type Filter = MemvidFilter;
 
     /// Run a search and deserialise each hit's JSON representation into `T`.
     ///
-    /// **Contract:** the type `T` must be deserialisable from a
-    /// [`SearchHit`] JSON object (i.e. either `T = SearchHit` or a struct
-    /// whose fields are a subset of `SearchHit`'s, e.g.
-    /// `{frame_id, snippet, score, ...}`). Round-tripping arbitrary user
-    /// payloads is not supported here — use
-    /// [`MemvidStore::search`] for raw access.
+    /// # Contract
+    ///
+    /// The type `T` must be deserialisable from a [`SearchHit`] JSON object —
+    /// i.e. either `T = SearchHit` itself, or a struct whose fields are a
+    /// subset of `SearchHit`'s public fields (`frame_id`, `text`, `score`,
+    /// `metadata`, …). Use `serde_json::Value` for an opaque view.
+    ///
+    /// **This method does not round-trip user-defined document types.**
+    /// If you persisted JSON documents through [`InsertDocuments`] and want
+    /// them back, use [`VectorStoreIndex::top_n_ids`] for the frame ids and
+    /// then [`MemvidStore::search`] for full-fidelity access via the
+    /// memvid-native [`SearchRequest`] API.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use memvid_core::SearchHit;
+    /// use rig::vector_store::{
+    ///     VectorSearchRequest, VectorStoreIndex,
+    ///     request::VectorSearchRequestBuilder,
+    /// };
+    /// use rig_memvid::{MemvidFilter, MemvidStore};
+    ///
+    /// # async fn run(store: MemvidStore) -> anyhow::Result<()> {
+    /// let req: VectorSearchRequest<MemvidFilter> =
+    ///     VectorSearchRequestBuilder::<MemvidFilter>::default()
+    ///         .query("hello")
+    ///         .samples(5)
+    ///         .build();
+    /// let hits: Vec<(f64, String, SearchHit)> = store.top_n(req).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn top_n<T>(
         &self,
         req: VectorSearchRequest<Self::Filter>,
@@ -674,48 +775,7 @@ impl VectorStoreIndex for MemvidStore {
         let samples = req.samples();
         let filter = req.filter().clone();
 
-        #[cfg(feature = "vec")]
-        let response = if self.embedder.is_some() {
-            let validated = match filter.clone() {
-                Some(f) => f.into_validated().map_err(VectorStoreError::from)?,
-                None => MemvidFilter::default(),
-            };
-            ensure_vec_filter_supported(&validated).map_err(VectorStoreError::from)?;
-            self.vec_search(&query, samples, &validated)
-                .map_err(VectorStoreError::from)?
-        } else {
-            let request = build_search_request(
-                query,
-                samples,
-                self.snippet_chars,
-                filter,
-                self.acl_context.clone(),
-                self.acl_enforcement_mode,
-            )
-            .map_err(VectorStoreError::from)?;
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|_| VectorStoreError::from(MemvidError::Poisoned))?;
-            guard.search(request).map_err(MemvidError::from)?
-        };
-        #[cfg(not(feature = "vec"))]
-        let response = {
-            let request = build_search_request(
-                query,
-                samples,
-                self.snippet_chars,
-                filter,
-                self.acl_context.clone(),
-                self.acl_enforcement_mode,
-            )
-            .map_err(VectorStoreError::from)?;
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|_| VectorStoreError::from(MemvidError::Poisoned))?;
-            guard.search(request).map_err(MemvidError::from)?
-        };
+        let response = self.run_search(query, samples, filter)?;
 
         let mut out = Vec::with_capacity(response.hits.len());
         for hit in response.hits {
@@ -736,48 +796,7 @@ impl VectorStoreIndex for MemvidStore {
         let samples = req.samples();
         let filter = req.filter().clone();
 
-        #[cfg(feature = "vec")]
-        let response = if self.embedder.is_some() {
-            let validated = match filter.clone() {
-                Some(f) => f.into_validated().map_err(VectorStoreError::from)?,
-                None => MemvidFilter::default(),
-            };
-            ensure_vec_filter_supported(&validated).map_err(VectorStoreError::from)?;
-            self.vec_search(&query, samples, &validated)
-                .map_err(VectorStoreError::from)?
-        } else {
-            let request = build_search_request(
-                query,
-                samples,
-                self.snippet_chars,
-                filter,
-                self.acl_context.clone(),
-                self.acl_enforcement_mode,
-            )
-            .map_err(VectorStoreError::from)?;
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|_| VectorStoreError::from(MemvidError::Poisoned))?;
-            guard.search(request).map_err(MemvidError::from)?
-        };
-        #[cfg(not(feature = "vec"))]
-        let response = {
-            let request = build_search_request(
-                query,
-                samples,
-                self.snippet_chars,
-                filter,
-                self.acl_context.clone(),
-                self.acl_enforcement_mode,
-            )
-            .map_err(VectorStoreError::from)?;
-            let mut guard = self
-                .inner
-                .lock()
-                .map_err(|_| VectorStoreError::from(MemvidError::Poisoned))?;
-            guard.search(request).map_err(MemvidError::from)?
-        };
+        let response = self.run_search(query, samples, filter)?;
 
         Ok(response
             .hits
@@ -818,7 +837,15 @@ impl InsertDocuments for MemvidStore {
             #[cfg(feature = "vec")]
             let emb = match &local_embedder {
                 Some(embedder) => {
-                    let text = std::str::from_utf8(&bytes).unwrap_or("");
+                    // `serde_json::to_vec` always returns valid UTF-8, so this
+                    // path is fully infallible today. Use `from_utf8` (not
+                    // `from_utf8_unchecked`) to keep the invariant explicit:
+                    // if a future refactor swaps the encoder, we surface the
+                    // problem as a typed error instead of silently embedding
+                    // an empty string.
+                    let text = std::str::from_utf8(&bytes).map_err(|e| {
+                        MemvidError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                    })?;
                     Some(embedder.encode_text(text).map_err(MemvidError::from)?)
                 }
                 None => None,

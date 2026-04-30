@@ -33,6 +33,12 @@ impl From<MemvidError> for VectorStoreError {
     /// Map a [`MemvidError`] onto the closest [`VectorStoreError`] variant
     /// so rig consumers can inspect failures without downcasting through
     /// the generic `DatastoreError` boxed trait object.
+    ///
+    /// Note: [`MemvidError::Memvid`], [`MemvidError::Io`], and
+    /// [`MemvidError::Poisoned`] all collapse into
+    /// [`VectorStoreError::DatastoreError`]; downstream callers that need
+    /// to distinguish them should match on the boxed source via
+    /// `Error::downcast_ref::<MemvidError>()`.
     fn from(err: MemvidError) -> Self {
         match err {
             MemvidError::Serde(e) => VectorStoreError::JsonError(e),
