@@ -4,6 +4,16 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.2...v0.1.3) - 2026-05-06
+
+### Added
+
+- Add in-memory lexical store
+
+### Fixed
+
+- Skip duplicate windows api_embed reopen test
+
 ### Added
 
 - `inmem` module: `Episode` trait + generic `InMemoryStore<E>` with
