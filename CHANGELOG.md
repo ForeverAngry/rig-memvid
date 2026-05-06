@@ -4,6 +4,18 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `inmem` module: `Episode` trait + generic `InMemoryStore<E>` with
+  deterministic lexical retrieval. The no-disk companion to
+  `MemvidStore` for tests, examples, and offline modes that don't want
+  to spin up a `.mv2` archive.
+- `InMemoryStore` lexical retrieval now normalizes tokens with
+  Unicode-aware lowercase and trims leading/trailing non-alphanumeric
+  characters (a Unicode-aware superset of ASCII punctuation), so
+  non-ASCII summaries and queries no longer fall through the offline
+  fallback while it remains deterministic and dependency-free.
+
 ## [0.1.2](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.1...v0.1.2) - 2026-04-30
 
 ### Changed

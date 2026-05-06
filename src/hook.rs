@@ -59,7 +59,7 @@ pub struct MemoryConfig {
     pub default_tags: Vec<String>,
     /// Logical scope written into the frame's URI prefix. When set, every
     /// frame produced by this hook is stored with `PutOptions.uri = Some(scope)`,
-    /// which makes [`crate::MemvidFilter::eq`]`("scope", scope)` match those
+    /// which makes `MemvidFilter::eq("scope", scope)` match those
     /// frames at query time (memvid's `scope` is a URI prefix filter).
     pub scope: Option<String>,
 }

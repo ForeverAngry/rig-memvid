@@ -235,7 +235,7 @@ impl MemvidStoreBuilder {
     }
 
     /// Number of context characters to capture around each search hit.
-    /// Defaults to [`DEFAULT_SNIPPET_CHARS`]. Applies to queries issued
+    /// Defaults to 400 characters. Applies to queries issued
     /// via [`VectorStoreIndex::top_n`] and the `vec` search path; callers
     /// who need per-query control should use [`MemvidStore::search`]
     /// directly with a hand-built [`SearchRequest`].

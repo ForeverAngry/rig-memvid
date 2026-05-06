@@ -42,12 +42,16 @@ mod error;
 #[cfg(not(target_family = "wasm"))]
 mod hook;
 #[cfg(not(target_family = "wasm"))]
+pub mod inmem;
+#[cfg(not(target_family = "wasm"))]
 mod store;
 
 #[cfg(not(target_family = "wasm"))]
 pub use error::MemvidError;
 #[cfg(not(target_family = "wasm"))]
 pub use hook::{MemoryConfig, MemvidPersistHook, WritePolicy, WriteTransform};
+#[cfg(not(target_family = "wasm"))]
+pub use inmem::{Episode, InMemoryError, InMemoryHit, InMemoryStore};
 #[cfg(not(target_family = "wasm"))]
 pub use store::{MemvidFilter, MemvidStore, MemvidStoreBuilder};
 
