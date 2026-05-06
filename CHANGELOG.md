@@ -4,6 +4,12 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.3...v0.1.4) - 2026-05-06
+
+### CI
+
+- Serialize windows test jobs
+
 ## [0.1.3](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.2...v0.1.3) - 2026-05-06
 
 ### Added
