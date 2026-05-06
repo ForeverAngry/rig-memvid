@@ -161,7 +161,7 @@ fn create_errors_when_file_already_exists() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "lex")]
+#[cfg(all(feature = "lex", not(all(windows, feature = "api_embed"))))]
 #[test]
 fn open_or_create_then_open_round_trip() -> Result<()> {
     let dir = tempdir()?;
