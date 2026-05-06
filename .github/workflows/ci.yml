@@ -76,11 +76,15 @@ jobs:
       - name: build & test
         shell: bash
         run: |
+          test_args=()
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            test_args=(-- --test-threads=1)
+          fi
           case "${{ matrix.features }}" in
-            default)    cargo test --all-targets ;;
-            no-default) cargo test --no-default-features --all-targets ;;
-            vec)        cargo test --no-default-features --features "lex,vec" --all-targets ;;
-            api_embed)  cargo test --no-default-features --features "lex,api_embed" --all-targets ;;
+            default)    cargo test --all-targets "${test_args[@]}" ;;
+            no-default) cargo test --no-default-features --all-targets "${test_args[@]}" ;;
+            vec)        cargo test --no-default-features --features "lex,vec" --all-targets "${test_args[@]}" ;;
+            api_embed)  cargo test --no-default-features --features "lex,api_embed" --all-targets "${test_args[@]}" ;;
           esac
 
   msrv:
