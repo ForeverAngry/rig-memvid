@@ -4,6 +4,12 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.4...v0.1.5) - 2026-05-07
+
+### Documentation
+
+- Remove retired repo references
+
 ## [0.1.4](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.3...v0.1.4) - 2026-05-06
 
 ### CI
