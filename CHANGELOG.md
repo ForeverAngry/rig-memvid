@@ -27,6 +27,92 @@ All notable changes to `rig-memvid` will be documented in this file.
   [examples/bench_vec_search.rs](examples/bench_vec_search.rs) for a
   reproducer.
 
+- `MemoryGraph` trait — backend-agnostic read-side abstraction over
+  structured-memory stores (entity / slot / value cards with versioning,
+  polarity, provenance). `MemvidStore` is the first impl; the trait
+  exists so the same `MemoryCardContext` can wrap a Postgres, SQLite, or
+  Neo4j-backed cards table behind a single interface. Phase 1 lives
+  in-crate; Phase 2 will be an upstream PR to `rig-core` next to
+  `VectorStoreIndex` once a second backend lands.
+- `MemoryCardContext` is now generic: `MemoryCardContext<G: MemoryGraph>`,
+  defaulting to `G = MemvidStore` so existing call sites keep compiling.
+- Logic-Mesh (graph track) pass-through on `MemvidStore`:
+  `mesh_node_count`, `mesh_edge_count`, `find_entity`, `frame_entities`,
+  `entities_by_kind`, `follow_relationship`. Surfaces memvid's typed
+  entity-relationship graph (auto-populated when frames are written with
+  `PutOptions::extract_triplets`) for `who-reports-to-whom`-style
+  traversal queries without a direct `memvid-core` dependency.
+- Re-exports: `EntityKind`, `MeshNode`, `MeshEdge`, `FollowResult`,
+  `LogicMeshStats`, `SearchHitEntity` from `memvid-core`.
+- `MemoryConfig::principal`: optional user identity binding for the
+  persistence hook. When set, first-person user turns are lightly
+  rewritten before memvid extraction (`I` / `my` / `I'm` -> the named
+  principal), improving card entity coalescing for chatbot memory.
+- `MemoryConfig::persist_assistant`: opt out of writing assistant
+  responses when the archive should capture user profile facts without
+  assistant paraphrase noise. Defaults to `true` for backwards
+  compatibility.
+- `MemoryConfig::supplemental_profile_cards`: principal-aware deterministic
+  profile / relationship-card extraction for common facts memvid can miss,
+  starting with allergy / avoidance statements (`Alice is allergic to
+  peanuts` -> `profile alice/allergy = peanuts`) and simple manager /
+  reporting statements (`Bob is Alice's manager at Acme. He reports to
+  Carol, the VP.` -> `relationship alice/manager = Bob`,
+  `relationship bob/reports_to = Carol`, `profile carol/title = VP`).
+  Defaults to `true` and is a no-op unless `principal` is set.
+- `MemoryCardContext` + `CardSelection`: a `VectorStoreIndex`-shaped view
+  over a `MemvidStore`'s structured-memory track. Wire as a second
+  `dynamic_context(n, _)` to surface entity / slot / value cards
+  alongside episodic frames, with no agent-side cooperation required.
+  Selection strategies: `EntityMentions` (default; case-insensitive
+  word-boundary entity match against the query), `RecentCards`,
+  `ForPrincipal(entity)`, `PreferencesFor(entities)`. Synthetic
+  recency-based score keeps Rig's downstream sorting stable.
+- `CardDoc` wire-format (re-exported) for the per-hit payload.
+- `MemvidStore::all_memory_cards` snapshot accessor.
+- `chatbot_with_memory_ollama` example now stacks
+  `dynamic_context(8, MemoryCardContext::new(store, EntityMentions))`
+  on top of the frame-based context.
+- `livetest_relationships_mlx` example exercises the structured-memory
+  relationship scenario against an OpenAI-compatible `mlx-lm` server,
+  defaulting to `LiquidAI/LFM2.5-1.2B-Thinking-MLX-8bit` for Apple
+  Silicon validation.
+
+### Changed
+
+- `MemoryCardContext` now ranks selected cards by deterministic query/card
+  relevance before applying the result limit, using recency only as a
+  tie-breaker. Principal-bound contexts still recall the broad profile,
+  but `where` queries prefer `location` cards, food-safety queries prefer
+  `allergy` cards, and preference queries prefer preference cards.
+- `CardSelection::ForPrincipal` now expands one hop through selected
+  relationship-card values, so a principal card such as
+  `alice/manager = Bob` can also surface Bob's own cards for follow-up
+  manager/reporting questions.
+- `MemoryCardContext` now renders common structured slots as compact
+  natural-language facts (`alice lives in Berlin`, `bob's manager =
+  Carol`, `alice is allergic to peanuts`) so smaller local models use
+  card context more reliably.
+
+### Added
+
+- Structured-memory pass-through on `MemvidStore`: `memory_card_count`,
+  `entity_memories`, `current_memory`, `entity_preferences`,
+  `aggregate_memory_slot`, `memory_timeline`, `put_memory_card`. Surfaces
+  memvid's `MemoryCard` track (Subject-Predicate-Object cards extracted
+  from frames when `PutOptions::extract_triplets` is on) without
+  requiring callers to take a direct `memvid-core` dependency.
+- Re-exports: `MemoryCard`, `MemoryCardId`, `MemoryKind`, `Polarity`,
+  `VersionRelation` from `memvid-core`.
+- `MemoryConfig` gains `auto_tag`, `extract_dates`, `extract_triplets`
+  fields (all default `true`, matching `memvid-core`'s `PutOptions`
+  defaults). Lets the persistence hook opt out of memvid's automatic
+  tagging / date extraction / SPO-triplet extraction without rebuilding
+  `PutOptions` by hand.
+- `chatbot_with_memory_ollama` example: new REPL commands
+  `/entity <name>`, `/prefs <name>`, `/slot <entity> <slot>`, and an
+  augmented `/stats` that also reports `memory_cards`.
+
 ## [0.1.4](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.3...v0.1.4) - 2026-05-06
 
 ### CI

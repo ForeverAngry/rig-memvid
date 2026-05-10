@@ -38,14 +38,20 @@ compile_error!(
 );
 
 #[cfg(not(target_family = "wasm"))]
+mod cards_context;
+#[cfg(not(target_family = "wasm"))]
 mod error;
 #[cfg(not(target_family = "wasm"))]
 mod hook;
 #[cfg(not(target_family = "wasm"))]
 pub mod inmem;
 #[cfg(not(target_family = "wasm"))]
+mod memory_graph;
+#[cfg(not(target_family = "wasm"))]
 mod store;
 
+#[cfg(not(target_family = "wasm"))]
+pub use cards_context::{CardDoc, CardSelection, MemoryCardContext};
 #[cfg(not(target_family = "wasm"))]
 pub use error::MemvidError;
 #[cfg(not(target_family = "wasm"))]
@@ -53,7 +59,22 @@ pub use hook::{MemoryConfig, MemvidPersistHook, WritePolicy, WriteTransform};
 #[cfg(not(target_family = "wasm"))]
 pub use inmem::{Episode, InMemoryError, InMemoryHit, InMemoryStore};
 #[cfg(not(target_family = "wasm"))]
+pub use memory_graph::MemoryGraph;
+#[cfg(not(target_family = "wasm"))]
 pub use store::{MemvidFilter, MemvidStore, MemvidStoreBuilder};
+
+#[cfg(not(target_family = "wasm"))]
+pub use memvid_core::types::{LogicMeshStats, SearchHitEntity};
+/// Re-exports of the memvid-core memory-card surface that
+/// [`MemvidStore`] returns from
+/// [`MemvidStore::entity_memories`] and friends. Re-exported here so
+/// callers do not need a direct `memvid-core` dependency just to name
+/// the structured-memory types.
+#[cfg(not(target_family = "wasm"))]
+pub use memvid_core::{
+    EntityKind, FollowResult, MemoryCard, MemoryCardId, MemoryKind, MeshEdge, MeshNode, Polarity,
+    VersionRelation,
+};
 
 #[cfg(not(target_family = "wasm"))]
 pub use memvid_core;

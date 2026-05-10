@@ -59,7 +59,7 @@ It is community-maintained and not part of the upstream `rig` repository.
 
 ## Usage
 
-Persistent store behavior is covered by [tests/smoke.rs](tests/smoke.rs) and [tests/integration.rs](tests/integration.rs). The examples [examples/chatbot_with_memory.rs](examples/chatbot_with_memory.rs), [examples/chatbot_with_memory_ollama.rs](examples/chatbot_with_memory_ollama.rs), and [examples/inspect_memory.rs](examples/inspect_memory.rs) show end-to-end archive usage.
+Persistent store behavior is covered by [tests/smoke.rs](tests/smoke.rs) and [tests/integration.rs](tests/integration.rs). The examples [examples/chatbot_with_memory.rs](examples/chatbot_with_memory.rs), [examples/chatbot_with_memory_ollama.rs](examples/chatbot_with_memory_ollama.rs), [examples/inspect_memory.rs](examples/inspect_memory.rs), [examples/livetest_relationships.rs](examples/livetest_relationships.rs), and [examples/livetest_relationships_mlx.rs](examples/livetest_relationships_mlx.rs) show end-to-end archive usage.
 
 ```rust,no_run
 use memvid_core::PutOptions;
@@ -89,6 +89,91 @@ let hits: Vec<(f64, String, serde_json::Value)> = store.top_n(request).await?;
 assert!(!hits.is_empty());
 # Ok(()) }
 ```
+
+### Structured memory (entities, slots, preferences)
+
+`memvid-core` automatically extracts Subject-Predicate-Object triplets,
+dates, and topical tags from each frame written through `put_text`
+(controlled by `PutOptions::extract_triplets` / `extract_dates` /
+`auto_tag`, all on by default — and now mirrored on
+`MemoryConfig::extract_triplets`, `extract_dates`, `auto_tag` for the
+persistence hook). The resulting `MemoryCard`s form a structured
+entity/slot index over the underlying free-text archive, queryable
+through:
+
+- `MemvidStore::memory_card_count`
+- `MemvidStore::entity_memories(entity)`
+- `MemvidStore::current_memory(entity, slot)` — most recent
+  non-retracted value
+- `MemvidStore::entity_preferences(entity)` — preference-kind cards
+- `MemvidStore::aggregate_memory_slot(entity, slot)` — every distinct
+  value recorded
+- `MemvidStore::memory_timeline(entity)` — event-kind cards in
+  chronological order
+- `MemvidStore::put_memory_card(card)` — insert a
+  hand-rolled `MemoryCard`
+
+`MemoryCard`, `MemoryKind`, `Polarity`, and `VersionRelation` are
+re-exported from `rig_memvid` so callers do not need a direct
+`memvid-core` dependency to name them. The
+`chatbot_with_memory_ollama` example exposes this surface through its
+`/entity`, `/prefs`, and `/slot` REPL commands.
+
+### Surfacing cards to the agent
+
+Reading cards from Rust is one half; getting the agent to *use* them is
+the other. `MemoryCardContext` is a `VectorStoreIndex` view over the
+card track that returns formatted card lines instead of frame text —
+wire it as a second `dynamic_context` and the agent sees both episodic
+recall (frames) and structured recall (cards), with no model-side
+cooperation required:
+
+```rust,no_run
+use rig_memvid::{CardSelection, MemoryCardContext, MemvidStore};
+# async fn run(store: MemvidStore) -> Result<(), Box<dyn std::error::Error>> {
+# let model: rig::providers::openai::CompletionModel = unimplemented!();
+let cards = MemoryCardContext::new(store.clone(), CardSelection::EntityMentions);
+let agent = rig::agent::AgentBuilder::new(model)
+    .dynamic_context(4, store)   // episodic frames
+    .dynamic_context(8, cards)   // structured cards
+    .build();
+# Ok(()) }
+```
+
+Selection strategies (`CardSelection`):
+
+- `EntityMentions` (default) — pulls cards for entities whose names
+  appear in the query, case-insensitive, word-boundary aware.
+  Deterministic, zero-dependency, no NER.
+- `RecentCards` — most recently written cards regardless of query.
+  Useful as a "what does the agent know about the user right now"
+  preamble.
+- `ForPrincipal(entity)` — cards for one stable entity regardless of
+  query text. Pair with `MemoryConfig { principal: Some(entity), .. }`
+  so first-person user turns such as `I like espresso` are persisted as
+  that entity's structured memories. Principal selection also expands
+  one hop through relationship-card values, so `alice/manager = Bob`
+  can surface `bob/reports_to = Carol` for manager/reporting questions.
+- `PreferencesFor(entities)` — preference-kind cards for a fixed list
+  of entities (typically `["user"]`).
+
+After a strategy selects candidate cards, `MemoryCardContext` ranks them
+against the query before applying the result limit. The ranking is
+deterministic and local: slot / kind / value matches beat recency, while
+recency remains a tie-breaker. This keeps broad principal recall useful
+without letting the newest card dominate unrelated questions; for
+example, `where` questions prefer `location` cards, food-safety
+questions prefer `allergy` cards, and preference questions prefer
+preference cards.
+
+For user-profile style archives, set `MemoryConfig::persist_assistant = false`
+to keep assistant paraphrases from creating duplicate or noisy cards.
+With `MemoryConfig::principal` set, `supplemental_profile_cards` also adds
+small deterministic cards for common user-profile and relationship facts
+that memvid's extractor can miss, such as `Alice is allergic to peanuts`
+-> `profile alice/allergy = peanuts` and `Bob is Alice's manager at Acme.
+He reports to Carol, the VP.` -> `relationship alice/manager = Bob`,
+`relationship bob/reports_to = Carol`, and `profile carol/title = VP`.
 
 For no-disk tests or offline modes, [src/inmem.rs](src/inmem.rs) includes unit tests for append, lookup, deterministic ranking, zero-score filtering, and Unicode normalization.
 
