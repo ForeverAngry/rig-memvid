@@ -28,10 +28,15 @@ tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
-default = ["lex"]
+default = ["lex", "simd"]
 lex = ["memvid-core/lex"]
-vec = ["memvid-core/vec"]
-api_embed = ["memvid-core/api_embed"]
+# SIMD-accelerated vector distance kernels (memvid-core default we'd
+# otherwise be dropping by setting `default-features = false`). Chained
+# into `vec` and `api_embed` so any build that retrieves over embeddings
+# always gets the SIMD path, regardless of `default-features`.
+simd = ["memvid-core/simd"]
+vec = ["memvid-core/vec", "simd"]
+api_embed = ["memvid-core/api_embed", "simd"]
 temporal = ["memvid-core/temporal_track"]
 encryption = ["memvid-core/encryption"]
 
