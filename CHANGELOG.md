@@ -1,5 +1,7 @@
 # Changelog
 
+<!-- markdownlint-disable MD024 -->
+
 All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
@@ -26,7 +28,8 @@ All notable changes to `rig-memvid` will be documented in this file.
   perf win on today's `memvid-core`. See
   [examples/bench_vec_search.rs](examples/bench_vec_search.rs) for a
   reproducer.
-
+- Add crate-local `ROADMAP.md` documenting maturity status, next work, and
+  non-goals for the Memvid memory adapter.
 - `MemoryGraph` trait — backend-agnostic read-side abstraction over
   structured-memory stores (entity / slot / value cards with versioning,
   polarity, provenance). `MemvidStore` is the first impl; the trait

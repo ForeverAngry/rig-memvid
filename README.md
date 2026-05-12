@@ -29,6 +29,10 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 - Platform stance: not supported on `wasm` targets because `memvid-core` requires synchronous file I/O and OS-level file locking.
 - Current Unreleased work adds `InMemoryStore<E>` and Unicode-aware lexical normalization for that offline store.
 
+The crate-local maturity plan lives in [ROADMAP.md](ROADMAP.md). Cross-crate
+coordination lives in
+[`rig-contributions/docs/roadmap.md`](../rig-contributions/docs/roadmap.md).
+
 ## Feature Flags
 
 | Feature | Default | Enables | Checked by `just check` |
