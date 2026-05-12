@@ -36,6 +36,8 @@ jobs:
           - "encryption"
     steps:
       - uses: actions/checkout@v4
+      - name: checkout rig-compose dev dependency
+        run: git clone --depth=1 https://github.com/ForeverAngry/rig-compose ../rig-compose
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -69,6 +71,8 @@ jobs:
             features: "vec"
     steps:
       - uses: actions/checkout@v4
+      - name: checkout rig-compose dev dependency
+        run: git clone --depth=1 https://github.com/ForeverAngry/rig-compose ../rig-compose
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -92,6 +96,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: checkout rig-compose dev dependency
+        run: git clone --depth=1 https://github.com/ForeverAngry/rig-compose ../rig-compose
       - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
         with:
@@ -103,6 +109,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: checkout rig-compose dev dependency
+        run: git clone --depth=1 https://github.com/ForeverAngry/rig-compose ../rig-compose
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
