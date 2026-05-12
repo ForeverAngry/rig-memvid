@@ -4,6 +4,16 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.4...v0.1.5) - 2026-05-12
+
+### Added
+
+- *(features)* Restore memvid-core simd default ([#7](https://github.com/ForeverAngry/rig-memvid/pull/7))
+
+### Documentation
+
+- Remove retired repo references
+
 ### Changed
 
 - **MSRV bumped from 1.88 to 1.89.** Required by `memvid-core`'s
