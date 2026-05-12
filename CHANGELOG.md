@@ -4,6 +4,29 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **MSRV bumped from 1.88 to 1.89.** Required by `memvid-core`'s
+  `wide`/`safe_arch` SIMD dependencies, which moved their MSRV to 1.89
+  across the entire 1.x line. Pinning is not possible: `memvid-core`
+  requires `wide = "1"` and no published `wide` 1.x supports 1.88.
+
+### Added
+
+- New `simd` feature (enabled by default) that forwards
+  `memvid-core/simd` and restores the upstream-default vector kernels
+  that were silently being dropped by our `default-features = false`
+  setting on the `memvid-core` dep. Pulls in `wide` (pure Rust, no MSRV
+  or platform cost). `vec` and `api_embed` chain `simd` so any build
+  that performs embedding-based retrieval gets the SIMD path regardless
+  of `default-features`. At the current `MemvidStore::top_n` boundary
+  the visible per-query delta is below measurement noise — embedding
+  the query and deserializing hits dominate — so this is a
+  default-restoration / future-proofing change rather than a measured
+  perf win on today's `memvid-core`. See
+  [examples/bench_vec_search.rs](examples/bench_vec_search.rs) for a
+  reproducer.
+
 ## [0.1.4](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.3...v0.1.4) - 2026-05-06
 
 ### CI
