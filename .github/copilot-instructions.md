@@ -9,7 +9,7 @@ It exposes two composable primitives that share an `Arc<Mutex<Memvid>>`:
 
 ## Project conventions
 
-- **Edition**: Rust 2024, MSRV `1.88`.
+- **Edition**: Rust 2024, MSRV `1.89`.
 - **Errors**: define typed errors in [src/error.rs](src/error.rs) using `thiserror`.
   Return `Result<_, Error>`; do not introduce ad-hoc `Box<dyn Error>`.
 - **Async**: public APIs are `async` and runtime-agnostic. Tests/examples use `tokio`.

@@ -14,7 +14,7 @@ primitives sharing an `Arc<Mutex<Memvid>>`:
 
 ## Rules
 
-- Rust 2024, MSRV 1.88. Library is runtime-agnostic; do not add `tokio` to
+- Rust 2024, MSRV 1.89. Library is runtime-agnostic; do not add `tokio` to
   `[dependencies]`.
 - Errors: typed `thiserror` enum in [src/error.rs](src/error.rs); return
   `Result<_, Error>`.

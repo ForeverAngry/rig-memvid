@@ -22,7 +22,7 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 - Crate version: `0.1.2`.
 - Rust edition: 2024.
-- MSRV: 1.88.
+- MSRV: 1.89.
 - `rig-core` dependency: `0.36.0` with default features disabled.
 - `memvid-core` dependency: `2.0.139` with default features disabled.
 - Runtime stance: runtime-agnostic library; `tokio` is only a dev-dependency for tests and examples.

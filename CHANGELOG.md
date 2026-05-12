@@ -4,6 +4,13 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **MSRV bumped from 1.88 to 1.89.** Required by `memvid-core`'s
+  `wide`/`safe_arch` SIMD dependencies, which moved their MSRV to 1.89
+  across the entire 1.x line. Pinning is not possible: `memvid-core`
+  requires `wide = "1"` and no published `wide` 1.x supports 1.88.
+
 ### Added
 
 - New `simd` feature (enabled by default) that forwards
