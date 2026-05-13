@@ -20,14 +20,14 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 ## Status
 
-- Crate version: `0.1.2`.
+- Crate version: `0.1.4`.
 - Rust edition: 2024.
 - MSRV: 1.89.
-- `rig-core` dependency: `0.36.0` with default features disabled.
+- `rig-core` dependency: `0.37.0` with default features disabled, renamed to `rig` so the historic `use rig::...` paths still work.
 - `memvid-core` dependency: `2.0.139` with default features disabled.
 - Runtime stance: runtime-agnostic library; `tokio` is only a dev-dependency for tests and examples.
 - Platform stance: not supported on `wasm` targets because `memvid-core` requires synchronous file I/O and OS-level file locking.
-- Current Unreleased work adds `InMemoryStore<E>` and Unicode-aware lexical normalization for that offline store.
+- Current Unreleased work restores memvid's default SIMD distance kernels through a new default `simd` feature, adds structured-memory card/context surfaces, principal-aware persistence, Logic Mesh pass-through, and local-model memory examples.
 
 The crate-local maturity plan lives in [ROADMAP.md](ROADMAP.md). Cross-crate
 coordination lives in
@@ -38,10 +38,12 @@ coordination lives in
 | Feature | Default | Enables | Checked by `just check` |
 | --- | --- | --- | --- |
 | `lex` | yes | Memvid lexical search via `memvid-core/lex`. | default clippy and tests; also in `lex,vec` and `lex,api_embed` clippy combos |
+| `simd` | yes | Memvid SIMD distance kernels via `memvid-core/simd`, restoring the upstream default path dropped by `default-features = false`. | default clippy and tests; chained into `vec` and `api_embed` |
 | `vec` | no | Memvid local vector search via `memvid-core/vec`. | clippy with `--no-default-features --features "lex,vec"`; tests with the same combo |
 | `api_embed` | no | Remote embedding provider support via `memvid-core/api_embed`. | clippy with `--no-default-features --features "lex,api_embed"` |
 | `temporal` | no | Temporal track support via `memvid-core/temporal_track`. | not exercised by `just check` |
 | `encryption` | no | At-rest encryption via `memvid-core/encryption`. | not exercised by `just check` |
+| `compaction` | no | `MemvidDemotionHook` + `MemvidStoringCompactor` adapters onto `rig::memory::DemotionHook` / `rig::memory::Compactor`. Pulls `rig-memory = 0.1`. | clippy + tests with `--no-default-features --features "lex,compaction"` and via `--all-features` |
 
 ## Key Types
 
@@ -212,7 +214,7 @@ assert_eq!(hits.len(), 1);
 
 Canonical validation is `just check`.
 
-That recipe runs formatter checks, clippy for default features plus `--no-default-features --features "lex,vec"` and `--no-default-features --features "lex,api_embed"`, then tests for default features, no default features, and `--no-default-features --features "lex,vec"`.
+That recipe runs formatter checks, clippy for default features plus `--no-default-features --features "lex,vec"` and `--no-default-features --features "lex,api_embed"`, then tests for default features, no default features, and `--no-default-features --features "lex,vec"`. The default path includes the `simd` feature.
 
 Examples must also continue to build with `cargo build --examples`.
 
@@ -233,7 +235,7 @@ These companion crates are maintained as separate repositories. Together they fo
 ```mermaid
 flowchart TD
     rig["rig / rig-core"]
-    compose["rig-compose 0.1.x"]
+    compose["rig-compose 0.2.x"]
     resources["rig-resources 0.1.x"]
     mcp["rig-mcp 0.1.x"]
     memvid["rig-memvid 0.1.x"]

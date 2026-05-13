@@ -11,14 +11,30 @@ authors = ["ForeverAngry"]
 keywords = ["rig", "memvid", "ai", "agent", "memory"]
 categories = ["text-processing", "database"]
 
+# NOTE: we depend on `rig-core` directly (not the `rig` facade introduced
+# by PR #1699's workspace reorg) to keep the dep graph minimal — the
+# facade pulls optional integration features we do not need. The local
+# `package = "rig-core"` rename preserves the historic `use rig::...`
+# import path across this crate while siblings (`rig-compose`,
+# `rig-resources`, `rig-mcp`) consume `rig-core` under its `rig_core`
+# library name. Downstream consumers see no change to the published
+# surface.
 [dependencies]
-rig-core = { version = "0.36.0", default-features = false }
+rig = { package = "rig-core", version = "0.37.0", default-features = false }
+rig-memory = { version = "0.1.1", optional = true, default-features = false }
 memvid-core = { version = "2.0.139", default-features = false }
 thiserror = "2.0.12"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 tracing = "0.1.41"
 futures = "0.3.32"
+# Content hashing for the `compaction` feature's dedup manifest. Pulled
+# only when `compaction` is enabled.
+blake3 = { version = "1", optional = true, default-features = false }
+# rig-compose `ContextItem` projection. Pulled only when the
+# `context-projection` feature is enabled so the default build stays
+# free of the rig-compose dep.
+rig-compose = { version = "0.2.0", path = "../rig-compose", optional = true, default-features = false }
 
 [dev-dependencies]
 anyhow = "1.0.102"
@@ -40,6 +56,17 @@ vec = ["memvid-core/vec", "simd"]
 api_embed = ["memvid-core/api_embed", "simd"]
 temporal = ["memvid-core/temporal_track"]
 encryption = ["memvid-core/encryption"]
+# Compaction integration: enables `MemvidDemotionHook` and
+# `MemvidStoringCompactor`, which adapt rig-core's `DemotionHook` /
+# `Compactor` traits onto `MemvidStore`. Pulls `rig-memory` so callers can
+# build a `CompactingMemory` whose summaries land in `.mv2` durably, and
+# `blake3` for the in-process dedup that satisfies the upstream
+# idempotency contract on `(conversation_id, messages)`.
+compaction = ["dep:rig-memory", "dep:blake3"]
+# Project `MemvidStore` / `InMemoryStore` retrieval hits into
+# `rig_compose::ContextItem` so hosts can fold memory recall into a
+# shared context pack. Pulls `rig-compose` as a runtime dependency.
+context-projection = ["dep:rig-compose"]
 
 [lints.clippy]
 dbg_macro = "forbid"

@@ -603,7 +603,7 @@ fn bind_token(token: &str, principal: &str) -> String {
 ///
 /// `Message::rag_text` is `pub(crate)` in rig-core, so we re-implement the
 /// equivalent walk here over the public content enums.
-fn render_message_text(msg: &Message) -> Option<String> {
+pub(crate) fn render_message_text(msg: &Message) -> Option<String> {
     use rig::completion::message::{
         AssistantContent, Message as Msg, ReasoningContent, UserContent,
     };

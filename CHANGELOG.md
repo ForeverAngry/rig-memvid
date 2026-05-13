@@ -8,6 +8,14 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ### Changed
 
+- **`rig-core` dependency bumped from `0.36.0` to `0.37.0`.** Picks up
+  PR [#1748](https://github.com/0xPlaygrounds/rig/pull/1748) which
+  introduces the `Compactor` and `DemotionHook` memory traits this
+  release wires into the Memvid surface. We depend on `rig-core`
+  directly but rename it back to `rig` in [Cargo.toml](Cargo.toml) so
+  the historic `use rig::...` import paths across this crate continue
+  to work unchanged. Downstream consumers see no change to the
+  published surface.
 - **MSRV bumped from 1.88 to 1.89.** Required by `memvid-core`'s
   `wide`/`safe_arch` SIMD dependencies, which moved their MSRV to 1.89
   across the entire 1.x line. Pinning is not possible: `memvid-core`
@@ -15,6 +23,39 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ### Added
 
+- **`context-projection` feature (off by default; optional
+  `rig-compose` dep).** New `projection` module exposes an
+  `IntoContextItem` trait plus `search_hits_to_context_items` and
+  `inmem_hits_to_context_items` helpers that project
+  `memvid_core::SearchHit` and `InMemoryHit<E>` into
+  `rig_compose::ContextItem`s tagged with `ContextSourceKind::Memory`.
+  Each item carries rank, score, and a structured `provenance` JSON
+  object (`resource`, `frame_id`/`key`, `uri`, `range`, `matches`,
+  optional `title`/`chunk_range`/`metadata`) mirroring the
+  `rig-resources` projection vocabulary so coordinators can fold memvid
+  recall, resource lookups, and tool results into a single bounded
+  context pack. Missing engine scores fall back to `1 / (rank + 1)` so
+  packers that key off `score` alone stay monotonic. Five unit tests
+  plus the module doctest live alongside the module.
+
+- **Compaction integration with `rig-core` memory traits** behind a new
+  optional `compaction` feature (off by default; pulls
+  `rig-memory = "0.1"`). Two primitives:
+  - `MemvidDemotionHook` implements `rig::memory::DemotionHook` and
+    drains messages evicted from an active conversation window into a
+    shared `MemvidStore`. Honours `MemoryConfig` (`WritePolicy`,
+    `default_tags`, `scope`, `commit_each_turn`, `auto_tag`,
+    `extract_dates`, `extract_triplets`) and tags every persisted frame
+    with `kind = "demoted_message"` plus the `conversation_id`.
+  - `MemvidStoringCompactor<C>` decorates any `rig::memory::Compactor`
+    (e.g. `rig_memory::TemplateCompactor` or an LLM-backed compactor)
+    and persists each produced summary into `MemvidStore` as a
+    `kind = "compaction_summary"` frame before returning the artifact
+    to the composing `CompactingMemory` adapter. Preserves the inner
+    `Artifact` type so callers see no API surface change.
+  Integration tests in
+  [tests/demotion_hook.rs](tests/demotion_hook.rs) and
+  [tests/storing_compactor.rs](tests/storing_compactor.rs).
 - New `simd` feature (enabled by default) that forwards
   `memvid-core/simd` and restores the upstream-default vector kernels
   that were silently being dropped by our `default-features = false`
