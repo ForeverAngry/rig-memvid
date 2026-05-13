@@ -23,6 +23,34 @@ agent:
     OLLAMA_API_BASE_URL="{{OLLAMA_API_BASE}}" \
     cargo run --example chatbot_with_memory_ollama
 
+# Run the local-Ollama chatbot with an explicit model name.
+agent-with-model MODEL:
+    OLLAMA_MODEL="{{MODEL}}" \
+    OLLAMA_API_BASE_URL="{{OLLAMA_API_BASE}}" \
+    cargo run --example chatbot_with_memory_ollama
+
+# Pick a model from `ollama list`, then run the local-Ollama chatbot.
+agent-select:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    models=($(ollama list | awk 'NR > 1 && NF { print $1 }'))
+    if [ "${#models[@]}" -eq 0 ]; then
+        echo "No Ollama models found. Run 'just pull' or 'ollama pull <model>' first." >&2
+        exit 1
+    fi
+
+    echo "Select an Ollama model:"
+    select model in "${models[@]}"; do
+        if [ -n "${model:-}" ]; then
+            OLLAMA_MODEL="${model}" \
+            OLLAMA_API_BASE_URL="{{OLLAMA_API_BASE}}" \
+            cargo run --example chatbot_with_memory_ollama
+            break
+        fi
+        echo "Invalid selection." >&2
+    done
+
 # Pull the configured Ollama model so `just agent` can use it.
 pull:
     ollama pull "{{OLLAMA_MODEL}}"
@@ -47,8 +75,8 @@ reset:
 build:
     cargo build --all-targets
 
-# Run formatter check + clippy + tests across the same feature combos as CI.
-check: fmt clippy test
+# Run formatter check + clippy + tests across the main CI feature combos.
+check: fmt clippy test msrv
 
 fmt:
     cargo fmt --all -- --check
@@ -57,11 +85,22 @@ clippy:
     cargo clippy --all-targets -- -D warnings
     cargo clippy --no-default-features --features "lex,vec" --all-targets -- -D warnings
     cargo clippy --no-default-features --features "lex,api_embed" --all-targets -- -D warnings
+    cargo clippy --no-default-features --features "lex,vec,api_embed" --all-targets -- -D warnings
+    cargo clippy --no-default-features --features "lex,temporal" --all-targets -- -D warnings
+    cargo clippy --no-default-features --features "lex,encryption" --all-targets -- -D warnings
+    cargo clippy --no-default-features --features "lex,compaction" --all-targets -- -D warnings
+    cargo clippy --all-features --all-targets -- -D warnings
 
 test:
     cargo test --all-targets
     cargo test --no-default-features --all-targets
     cargo test --no-default-features --features "lex,vec" --all-targets
+    cargo test --no-default-features --features "lex,api_embed" --all-targets
+    cargo test --no-default-features --features "lex,compaction" --all-targets
+    cargo test --all-features --all-targets
+
+msrv:
+    rustup run 1.89 cargo build --all-targets
 
 # Run the (ignored) semantic search test. Downloads BGE-small on first run.
 test-semantic:
@@ -70,6 +109,9 @@ test-semantic:
 # Validate the package as it would be uploaded to crates.io.
 publish-dry-run:
     cargo publish --dry-run
+
+# Run all checks needed for a PR / commit to main locally.
+pr-ready: check test-semantic publish-dry-run
 
 # Publish to crates.io. Requires `cargo login` or CARGO_REGISTRY_TOKEN.
 publish:

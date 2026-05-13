@@ -38,14 +38,36 @@ compile_error!(
 );
 
 #[cfg(not(target_family = "wasm"))]
+mod cards_context;
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+mod compactor;
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+mod dedup;
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+mod demotion;
+#[cfg(not(target_family = "wasm"))]
 mod error;
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+mod frame_writer;
 #[cfg(not(target_family = "wasm"))]
 mod hook;
 #[cfg(not(target_family = "wasm"))]
 pub mod inmem;
 #[cfg(not(target_family = "wasm"))]
+mod memory_graph;
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+pub mod metadata;
+#[cfg(all(not(target_family = "wasm"), feature = "context-projection"))]
+pub mod projection;
+#[cfg(not(target_family = "wasm"))]
 mod store;
 
+#[cfg(not(target_family = "wasm"))]
+pub use cards_context::{CardDoc, CardSelection, MemoryCardContext};
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+pub use compactor::MemvidStoringCompactor;
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+pub use demotion::MemvidDemotionHook;
 #[cfg(not(target_family = "wasm"))]
 pub use error::MemvidError;
 #[cfg(not(target_family = "wasm"))]
@@ -53,7 +75,31 @@ pub use hook::{MemoryConfig, MemvidPersistHook, WritePolicy, WriteTransform};
 #[cfg(not(target_family = "wasm"))]
 pub use inmem::{Episode, InMemoryError, InMemoryHit, InMemoryStore};
 #[cfg(not(target_family = "wasm"))]
+pub use memory_graph::MemoryGraph;
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+pub use metadata::{FrameKind, MemvidFrameMetadata};
+/// Re-exports of the `rig-memory` compaction surface so callers can
+/// build a `CompactingMemory<M, P, MemvidStoringCompactor<C>>` without
+/// adding `rig-memory` as a direct dependency.
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+pub use rig::memory::{Compactor, DemotionHook, MemoryError};
+#[cfg(all(not(target_family = "wasm"), feature = "compaction"))]
+pub use rig_memory::{CompactingMemory, TemplateCompactor, TextSummary};
+#[cfg(not(target_family = "wasm"))]
 pub use store::{MemvidFilter, MemvidStore, MemvidStoreBuilder};
+
+#[cfg(not(target_family = "wasm"))]
+pub use memvid_core::types::{LogicMeshStats, SearchHitEntity};
+/// Re-exports of the memvid-core memory-card surface that
+/// [`MemvidStore`] returns from
+/// [`MemvidStore::entity_memories`] and friends. Re-exported here so
+/// callers do not need a direct `memvid-core` dependency just to name
+/// the structured-memory types.
+#[cfg(not(target_family = "wasm"))]
+pub use memvid_core::{
+    EntityKind, FollowResult, MemoryCard, MemoryCardId, MemoryKind, MeshEdge, MeshNode, Polarity,
+    VersionRelation,
+};
 
 #[cfg(not(target_family = "wasm"))]
 pub use memvid_core;

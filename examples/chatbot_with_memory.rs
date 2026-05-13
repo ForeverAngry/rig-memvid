@@ -46,6 +46,7 @@ async fn main() -> Result<()> {
             commit_each_turn: true,
             default_tags: vec!["chatbot".into()],
             scope: Some("chatbot_memory".into()),
+            ..MemoryConfig::default()
         },
     );
 

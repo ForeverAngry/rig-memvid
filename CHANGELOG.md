@@ -1,11 +1,21 @@
 # Changelog
 
+<!-- markdownlint-disable MD024 -->
+
 All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
 ### Changed
 
+- **`rig-core` dependency bumped from `0.36.0` to `0.37.0`.** Picks up
+  PR [#1748](https://github.com/0xPlaygrounds/rig/pull/1748) which
+  introduces the `Compactor` and `DemotionHook` memory traits this
+  release wires into the Memvid surface. We depend on `rig-core`
+  directly but rename it back to `rig` in [Cargo.toml](Cargo.toml) so
+  the historic `use rig::...` import paths across this crate continue
+  to work unchanged. Downstream consumers see no change to the
+  published surface.
 - **MSRV bumped from 1.88 to 1.89.** Required by `memvid-core`'s
   `wide`/`safe_arch` SIMD dependencies, which moved their MSRV to 1.89
   across the entire 1.x line. Pinning is not possible: `memvid-core`
@@ -13,6 +23,39 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ### Added
 
+- **`context-projection` feature (off by default; optional
+  `rig-compose` dep).** New `projection` module exposes an
+  `IntoContextItem` trait plus `search_hits_to_context_items` and
+  `inmem_hits_to_context_items` helpers that project
+  `memvid_core::SearchHit` and `InMemoryHit<E>` into
+  `rig_compose::ContextItem`s tagged with `ContextSourceKind::Memory`.
+  Each item carries rank, score, and a structured `provenance` JSON
+  object (`resource`, `frame_id`/`key`, `uri`, `range`, `matches`,
+  optional `title`/`chunk_range`/`metadata`) mirroring the
+  `rig-resources` projection vocabulary so coordinators can fold memvid
+  recall, resource lookups, and tool results into a single bounded
+  context pack. Missing engine scores fall back to `1 / (rank + 1)` so
+  packers that key off `score` alone stay monotonic. Five unit tests
+  plus the module doctest live alongside the module.
+
+- **Compaction integration with `rig-core` memory traits** behind a new
+  optional `compaction` feature (off by default; pulls
+  `rig-memory = "0.1"`). Two primitives:
+  - `MemvidDemotionHook` implements `rig::memory::DemotionHook` and
+    drains messages evicted from an active conversation window into a
+    shared `MemvidStore`. Honours `MemoryConfig` (`WritePolicy`,
+    `default_tags`, `scope`, `commit_each_turn`, `auto_tag`,
+    `extract_dates`, `extract_triplets`) and tags every persisted frame
+    with `kind = "demoted_message"` plus the `conversation_id`.
+  - `MemvidStoringCompactor<C>` decorates any `rig::memory::Compactor`
+    (e.g. `rig_memory::TemplateCompactor` or an LLM-backed compactor)
+    and persists each produced summary into `MemvidStore` as a
+    `kind = "compaction_summary"` frame before returning the artifact
+    to the composing `CompactingMemory` adapter. Preserves the inner
+    `Artifact` type so callers see no API surface change.
+  Integration tests in
+  [tests/demotion_hook.rs](tests/demotion_hook.rs) and
+  [tests/storing_compactor.rs](tests/storing_compactor.rs).
 - New `simd` feature (enabled by default) that forwards
   `memvid-core/simd` and restores the upstream-default vector kernels
   that were silently being dropped by our `default-features = false`
@@ -26,6 +69,93 @@ All notable changes to `rig-memvid` will be documented in this file.
   perf win on today's `memvid-core`. See
   [examples/bench_vec_search.rs](examples/bench_vec_search.rs) for a
   reproducer.
+- Add crate-local `ROADMAP.md` documenting maturity status, next work, and
+  non-goals for the Memvid memory adapter.
+- `MemoryGraph` trait — backend-agnostic read-side abstraction over
+  structured-memory stores (entity / slot / value cards with versioning,
+  polarity, provenance). `MemvidStore` is the first impl; the trait
+  exists so the same `MemoryCardContext` can wrap a Postgres, SQLite, or
+  Neo4j-backed cards table behind a single interface. Phase 1 lives
+  in-crate; Phase 2 will be an upstream PR to `rig-core` next to
+  `VectorStoreIndex` once a second backend lands.
+- `MemoryCardContext` is now generic: `MemoryCardContext<G: MemoryGraph>`,
+  defaulting to `G = MemvidStore` so existing call sites keep compiling.
+- Logic-Mesh (graph track) pass-through on `MemvidStore`:
+  `mesh_node_count`, `mesh_edge_count`, `find_entity`, `frame_entities`,
+  `entities_by_kind`, `follow_relationship`. Surfaces memvid's typed
+  entity-relationship graph (auto-populated when frames are written with
+  `PutOptions::extract_triplets`) for `who-reports-to-whom`-style
+  traversal queries without a direct `memvid-core` dependency.
+- Re-exports: `EntityKind`, `MeshNode`, `MeshEdge`, `FollowResult`,
+  `LogicMeshStats`, `SearchHitEntity` from `memvid-core`.
+- `MemoryConfig::principal`: optional user identity binding for the
+  persistence hook. When set, first-person user turns are lightly
+  rewritten before memvid extraction (`I` / `my` / `I'm` -> the named
+  principal), improving card entity coalescing for chatbot memory.
+- `MemoryConfig::persist_assistant`: opt out of writing assistant
+  responses when the archive should capture user profile facts without
+  assistant paraphrase noise. Defaults to `true` for backwards
+  compatibility.
+- `MemoryConfig::supplemental_profile_cards`: principal-aware deterministic
+  profile / relationship-card extraction for common facts memvid can miss,
+  starting with allergy / avoidance statements (`Alice is allergic to
+  peanuts` -> `profile alice/allergy = peanuts`) and simple manager /
+  reporting statements (`Bob is Alice's manager at Acme. He reports to
+  Carol, the VP.` -> `relationship alice/manager = Bob`,
+  `relationship bob/reports_to = Carol`, `profile carol/title = VP`).
+  Defaults to `true` and is a no-op unless `principal` is set.
+- `MemoryCardContext` + `CardSelection`: a `VectorStoreIndex`-shaped view
+  over a `MemvidStore`'s structured-memory track. Wire as a second
+  `dynamic_context(n, _)` to surface entity / slot / value cards
+  alongside episodic frames, with no agent-side cooperation required.
+  Selection strategies: `EntityMentions` (default; case-insensitive
+  word-boundary entity match against the query), `RecentCards`,
+  `ForPrincipal(entity)`, `PreferencesFor(entities)`. Synthetic
+  recency-based score keeps Rig's downstream sorting stable.
+- `CardDoc` wire-format (re-exported) for the per-hit payload.
+- `MemvidStore::all_memory_cards` snapshot accessor.
+- `chatbot_with_memory_ollama` example now stacks
+  `dynamic_context(8, MemoryCardContext::new(store, EntityMentions))`
+  on top of the frame-based context.
+- `livetest_relationships_mlx` example exercises the structured-memory
+  relationship scenario against an OpenAI-compatible `mlx-lm` server,
+  defaulting to `LiquidAI/LFM2.5-1.2B-Thinking-MLX-8bit` for Apple
+  Silicon validation.
+
+### Changed
+
+- `MemoryCardContext` now ranks selected cards by deterministic query/card
+  relevance before applying the result limit, using recency only as a
+  tie-breaker. Principal-bound contexts still recall the broad profile,
+  but `where` queries prefer `location` cards, food-safety queries prefer
+  `allergy` cards, and preference queries prefer preference cards.
+- `CardSelection::ForPrincipal` now expands one hop through selected
+  relationship-card values, so a principal card such as
+  `alice/manager = Bob` can also surface Bob's own cards for follow-up
+  manager/reporting questions.
+- `MemoryCardContext` now renders common structured slots as compact
+  natural-language facts (`alice lives in Berlin`, `bob's manager =
+  Carol`, `alice is allergic to peanuts`) so smaller local models use
+  card context more reliably.
+
+### Added
+
+- Structured-memory pass-through on `MemvidStore`: `memory_card_count`,
+  `entity_memories`, `current_memory`, `entity_preferences`,
+  `aggregate_memory_slot`, `memory_timeline`, `put_memory_card`. Surfaces
+  memvid's `MemoryCard` track (Subject-Predicate-Object cards extracted
+  from frames when `PutOptions::extract_triplets` is on) without
+  requiring callers to take a direct `memvid-core` dependency.
+- Re-exports: `MemoryCard`, `MemoryCardId`, `MemoryKind`, `Polarity`,
+  `VersionRelation` from `memvid-core`.
+- `MemoryConfig` gains `auto_tag`, `extract_dates`, `extract_triplets`
+  fields (all default `true`, matching `memvid-core`'s `PutOptions`
+  defaults). Lets the persistence hook opt out of memvid's automatic
+  tagging / date extraction / SPO-triplet extraction without rebuilding
+  `PutOptions` by hand.
+- `chatbot_with_memory_ollama` example: new REPL commands
+  `/entity <name>`, `/prefs <name>`, `/slot <entity> <slot>`, and an
+  augmented `/stats` that also reports `memory_cards`.
 
 ## [0.1.4](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.3...v0.1.4) - 2026-05-06
 
