@@ -257,6 +257,7 @@ Pinned Rig-facing dependencies from the current manifests:
 | `rig-mcp` | `rig-compose = 0.3` | Bridges `rig-compose` tools over MCP stdio and loopback transports. |
 | `rig-memvid` | `rig-core = 0.36.0` | Implements Rig vector-store and prompt-hook flows over Memvid. |
 | `rig-model-meta` | none | Standalone model traits and descriptor types without `rig-core`. |
+| `rig-model-meta` | none | Standalone model traits and descriptor types without `rig-core`. |
 
 The concrete multi-crate workflow tested today is the MCP loopback path: a `rig_compose::ToolRegistry` is exposed through `rig_mcp::LoopbackTransport`, remote schemas are wrapped as `rig_mcp::McpTool`, and the wrapped tools are registered back into another `ToolRegistry`. That proves a local `rig-compose` tool and an MCP-adapted tool are indistinguishable to callers. The backing test is `mcp_tool_indistinguishable_from_local` in [rig-mcp/src/transport.rs](https://github.com/ForeverAngry/rig-mcp/blob/main/src/transport.rs).
 
