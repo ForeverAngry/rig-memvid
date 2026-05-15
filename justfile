@@ -17,6 +17,8 @@ OLLAMA_API_BASE := env_var_or_default("OLLAMA_API_BASE_URL", "http://localhost:1
 default:
     @just --list
 
+# --- Ollama chatbot helpers ---------------------------------------------------
+
 # Run the local-Ollama chatbot end-to-end (writes into {{MEMORY}}).
 agent:
     OLLAMA_MODEL="{{OLLAMA_MODEL}}" \
@@ -71,16 +73,20 @@ reset:
     rm -f "{{MEMORY}}"
     @echo "removed {{MEMORY}}"
 
+# --- Standard recipes ---------------------------------------------------------
+
 # Build all targets with default features.
 build:
     cargo build --all-targets
 
-# Run formatter check + clippy + tests across the main CI feature combos.
-check: fmt clippy test msrv
+# Format check + clippy + tests + msrv + doc + examples.
+check: fmt clippy test msrv doc examples
 
+# Verify code is formatted (does not mutate).
 fmt:
     cargo fmt --all -- --check
 
+# Clippy across CI feature combos.
 clippy:
     cargo clippy --all-targets -- -D warnings
     cargo clippy --no-default-features --features "lex,vec" --all-targets -- -D warnings
@@ -89,18 +95,30 @@ clippy:
     cargo clippy --no-default-features --features "lex,temporal" --all-targets -- -D warnings
     cargo clippy --no-default-features --features "lex,encryption" --all-targets -- -D warnings
     cargo clippy --no-default-features --features "lex,compaction" --all-targets -- -D warnings
+    cargo clippy --no-default-features --features "lex,context-projection" --all-targets -- -D warnings
     cargo clippy --all-features --all-targets -- -D warnings
 
+# Tests across CI feature combos.
 test:
     cargo test --all-targets
     cargo test --no-default-features --all-targets
     cargo test --no-default-features --features "lex,vec" --all-targets
     cargo test --no-default-features --features "lex,api_embed" --all-targets
     cargo test --no-default-features --features "lex,compaction" --all-targets
+    cargo test --no-default-features --features "lex,context-projection" --all-targets
     cargo test --all-features --all-targets
 
+# MSRV gate (Rust 1.89).
 msrv:
-    rustup run 1.89 cargo build --all-targets
+    cargo +1.89 build --all-targets
+
+# Rustdoc with strict warnings.
+doc:
+    RUSTDOCFLAGS="-D warnings -D rustdoc::broken_intra_doc_links" cargo doc --all-features --no-deps
+
+# Build every example with all features.
+examples:
+    cargo build --examples --all-features
 
 # Run the (ignored) semantic search test. Downloads BGE-small on first run.
 test-semantic:
@@ -110,15 +128,11 @@ test-semantic:
 publish-dry-run:
     cargo publish --dry-run
 
-# Run all checks needed for a PR / commit to main locally.
-pr-ready: check test-semantic publish-dry-run
-
 # Publish to crates.io. Requires `cargo login` or CARGO_REGISTRY_TOKEN.
 publish:
     cargo publish
 
 # Preview what release-plz would bump/changelog without changing anything.
-# Install: `cargo install release-plz` (or `brew install release-plz`).
 release-preview:
     release-plz update --dry-run
 
@@ -128,4 +142,17 @@ release-pr:
 
 # Inspect the next semver bump release-plz would compute from current commits.
 next-version:
-    @release-plz update --dry-run 2>&1 | grep -E "(bumping|no changes)" || true
+    @release-plz update --dry-run 2>&1 | grep -E "(bumping|no changes|next version)" || true
+
+# Run all checks needed for a PR / commit to main locally.
+pr-ready: check test-semantic publish-dry-run
+
+# Install a git pre-push hook that runs `just pr-ready`.
+install-hooks:
+    #!/usr/bin/env bash
+    echo '#!/usr/bin/env bash' > .git/hooks/pre-push
+    echo 'set -e' >> .git/hooks/pre-push
+    echo 'echo "Running just pr-ready..."' >> .git/hooks/pre-push
+    echo 'just pr-ready' >> .git/hooks/pre-push
+    chmod +x .git/hooks/pre-push
+    echo "pre-push hook installed."
