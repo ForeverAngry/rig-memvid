@@ -16,6 +16,9 @@ All notable changes to `rig-memvid` will be documented in this file.
   the historic `use rig::...` import paths across this crate continue
   to work unchanged. Downstream consumers see no change to the
   published surface.
+- **`rig-compose` dependency bumped from `0.2.0` to `0.3`.** The
+  optional `context-projection` feature and dev fixtures now align with
+  the current companion-kernel release.
 - **MSRV bumped from 1.88 to 1.89.** Required by `memvid-core`'s
   `wide`/`safe_arch` SIMD dependencies, which moved their MSRV to 1.89
   across the entire 1.x line. Pinning is not possible: `memvid-core`

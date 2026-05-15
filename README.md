@@ -5,7 +5,7 @@ Memvid-backed persistent memory and lexical store for Rig agents.
 [![crates.io](https://img.shields.io/crates/v/rig-memvid.svg)](https://crates.io/crates/rig-memvid)
 [![docs.rs](https://img.shields.io/docsrs/rig-memvid)](https://docs.rs/rig-memvid)
 [![license](https://img.shields.io/crates/l/rig-memvid.svg)](LICENSE)
-[![rig-core](https://img.shields.io/badge/rig--core-0.36.0-blue)](https://crates.io/crates/rig-core)
+[![rig-core](https://img.shields.io/badge/rig--core-0.37.0-blue)](https://crates.io/crates/rig-core)
 [![memvid-core](https://img.shields.io/badge/memvid--core-2.0.139-blue)](https://crates.io/crates/memvid-core)
 
 ## Overview
@@ -44,6 +44,7 @@ coordination lives in
 | `temporal` | no | Temporal track support via `memvid-core/temporal_track`. | not exercised by `just check` |
 | `encryption` | no | At-rest encryption via `memvid-core/encryption`. | not exercised by `just check` |
 | `compaction` | no | `MemvidDemotionHook` + `MemvidStoringCompactor` adapters onto `rig::memory::DemotionHook` / `rig::memory::Compactor`. Pulls `rig-memory = 0.1`. | clippy + tests with `--no-default-features --features "lex,compaction"` and via `--all-features` |
+| `context-projection` | no | Projects `MemvidStore` / `InMemoryStore` retrieval hits into `rig_compose::ContextItem`. Pulls `rig-compose = 0.3`. | clippy + tests with `--no-default-features --features "lex,context-projection"` and via `--all-features` |
 
 ## Key Types
 
@@ -59,7 +60,7 @@ The crate re-exports `memvid_core` so callers can construct `PutOptions`, `AclCo
 
 ## Integration With Rig
 
-`rig-memvid` pins `rig-core = 0.36.0` in [Cargo.toml](Cargo.toml). `MemvidStore` plugs into Rig's vector-store flow, including `VectorStoreIndex` and `InsertDocuments`. `MemvidPersistHook<M>` plugs into Rig's prompt lifecycle via `PromptHook<M>` for any `CompletionModel`.
+`rig-memvid` pins `rig-core = 0.37.0` in [Cargo.toml](Cargo.toml). `MemvidStore` plugs into Rig's vector-store flow, including `VectorStoreIndex` and `InsertDocuments`. `MemvidPersistHook<M>` plugs into Rig's prompt lifecycle via `PromptHook<M>` for any `CompletionModel`.
 
 It is community-maintained and not part of the upstream `rig` repository.
 
@@ -239,13 +240,13 @@ flowchart TD
     resources["rig-resources 0.1.x"]
     mcp["rig-mcp 0.1.x"]
     memvid["rig-memvid 0.1.x"]
-    model_meta["rig-model-meta 0.2.x"]
+    model_meta["rig-model-meta 0.1.x"]
 
     compose -. "Rig-shaped kernel; no direct rig-core dep" .-> rig
     resources -- "rig-compose = 0.3; features: security, graph, full" --> compose
     mcp -- "rig-compose = 0.3; rmcp stdio bridge" --> compose
-    memvid -- "rig-core = 0.36.0; features: lex, vec, api_embed, temporal, encryption" --> rig
-    model_meta -. "Metadata & capabilities (agnostic)" .-> rig
+    memvid -- "rig-core = 0.37.0; features: lex, simd, vec, api_embed, temporal, encryption, compaction, context-projection" --> rig
+    model_meta -. "optional rig-core = 0.37 via rig-hook" .-> rig
 ```
 
 Pinned Rig-facing dependencies from the current manifests:
@@ -255,9 +256,8 @@ Pinned Rig-facing dependencies from the current manifests:
 | `rig-compose` | none | Defines a Rig-shaped kernel surface without depending on `rig-core`. |
 | `rig-resources` | `rig-compose = 0.3` | Provides reusable skills, resource tools, and security helpers. |
 | `rig-mcp` | `rig-compose = 0.3` | Bridges `rig-compose` tools over MCP stdio and loopback transports. |
-| `rig-memvid` | `rig-core = 0.36.0` | Implements Rig vector-store and prompt-hook flows over Memvid. |
-| `rig-model-meta` | none | Standalone model traits and descriptor types without `rig-core`. |
-| `rig-model-meta` | none | Standalone model traits and descriptor types without `rig-core`. |
+| `rig-memvid` | `rig-core = 0.37.0`; optional `rig-compose = 0.3` | Implements Rig vector-store, prompt-hook, compaction, and context-projection flows over Memvid. |
+| `rig-model-meta` | optional `rig-core = 0.37` via `rig-hook` | Provides standalone model traits plus optional Rig prompt-hook telemetry. |
 
 The concrete multi-crate workflow tested today is the MCP loopback path: a `rig_compose::ToolRegistry` is exposed through `rig_mcp::LoopbackTransport`, remote schemas are wrapped as `rig_mcp::McpTool`, and the wrapped tools are registered back into another `ToolRegistry`. That proves a local `rig-compose` tool and an MCP-adapted tool are indistinguishable to callers. The backing test is `mcp_tool_indistinguishable_from_local` in [rig-mcp/src/transport.rs](https://github.com/ForeverAngry/rig-mcp/blob/main/src/transport.rs).
 
