@@ -27,14 +27,17 @@ It exposes two composable primitives that share an `Arc<Mutex<Memvid>>`:
 
 ## Feature flags
 
-Default = `lex`. Other flags forward to `memvid-core`:
-`vec`, `api_embed`, `temporal`, `encryption`. When adding code that depends on
-optional capabilities, gate it with `#[cfg(feature = "...")]` and ensure it
-still compiles under the CI feature combos:
+Default = `lex,simd`. Other flags forward to `memvid-core` or companion
+surfaces: `vec`, `api_embed`, `temporal`, `encryption`, `compaction`, and
+`context-projection`. When adding code that depends on optional capabilities,
+gate it with `#[cfg(feature = "...")]` and ensure it still compiles under the CI
+feature combos:
 
 - `--all-features`
 - `--no-default-features --features "lex,vec"`
 - `--no-default-features --features "lex,api_embed"`
+- `--no-default-features --features "lex,compaction"`
+- `--no-default-features --features "lex,context-projection"`
 
 ## Validation
 

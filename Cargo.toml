@@ -34,13 +34,13 @@ blake3 = { version = "1", optional = true, default-features = false }
 # rig-compose `ContextItem` projection. Pulled only when the
 # `context-projection` feature is enabled so the default build stays
 # free of the rig-compose dep.
-rig-compose = { version = "0.2.0", path = "../rig-compose", optional = true, default-features = false }
+rig-compose = { version = "0.3", path = "../rig-compose", optional = true, default-features = false }
 
 [dev-dependencies]
 anyhow = "1.0.102"
 tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rig-compose = { version = "0.2.0", path = "../rig-compose" }
+rig-compose = { version = "0.3", path = "../rig-compose" }
 tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
