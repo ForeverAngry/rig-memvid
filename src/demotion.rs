@@ -187,7 +187,16 @@ impl DemotionHook for MemvidDemotionHook {
             for msg in &messages {
                 self.write(conversation_id, msg)?;
             }
-            commit_if_each_turn(&self.store, &self.config)
+            commit_if_each_turn(&self.store, &self.config)?;
+            #[cfg(feature = "observe")]
+            rig_observe::emit_kind(
+                conversation_id,
+                rig_observe::EventKind::MemoryDemoted {
+                    demoted_count: messages.len(),
+                    tags: self.config.default_tags.clone(),
+                },
+            );
+            Ok(())
         })
     }
 }
