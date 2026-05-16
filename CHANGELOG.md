@@ -6,6 +6,23 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Optional `observe` feature.** Pulls `rig-observe` as a runtime
+  dependency and emits structured observability events from three tap
+  points: `memory.frame_written` whenever the persist hook,
+  compactor, or demotion hook lands a new (non-dedup) frame;
+  `context.compacted` from `MemvidStoringCompactor::compact` after the
+  inner compactor's summary is persisted; and `memory.demoted` from
+  `MemvidDemotionHook::on_demote` after the batch commits. The feature
+  is off by default — the standard build is byte-identical to the
+  prior release.
+- **`MemoryConfig::observe_conversation_id`.** New optional field
+  carrying the conversation ID stamped on observe events emitted by
+  `MemvidPersistHook`. Decouples telemetry correlation from memvid's
+  URI-prefix `scope`. When unset, the hook still falls back to `scope`
+  then `"default"`, so existing setups behave unchanged.
+
 ### Changed
 
 - **`rig-core` dependency bumped from `0.36.0` to `0.37.0`.** Picks up

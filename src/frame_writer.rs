@@ -72,6 +72,17 @@ pub(crate) fn write_frame(
     dedup
         .insert(key)
         .map_err(|err| MemoryError::backend(Box::new(err)))?;
+    #[cfg(feature = "observe")]
+    rig_observe::emit_kind(
+        conversation_id,
+        rig_observe::EventKind::MemoryFrameWritten {
+            frame_kind: kind.as_str().to_string(),
+            // memvid does not expose a cheap O(1) cumulative frame count
+            // from this path.
+            frame_count_after: None,
+            bytes_written: text.len(),
+        },
+    );
     Ok(true)
 }
 

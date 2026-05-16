@@ -9,8 +9,8 @@
 MEMORY := "chatbot_memory_ollama.mv2"
 
 # Default Ollama model + endpoint (override on the command line, e.g.
-#   `just agent OLLAMA_MODEL=llama3.2`).
-OLLAMA_MODEL    := env_var_or_default("OLLAMA_MODEL", "qwen2.5-coder:3b-instruct")
+#   `just agent OLLAMA_MODEL=qwen3.5:9b`).
+OLLAMA_MODEL    := env_var_or_default("OLLAMA_MODEL", "qwen3.5:9b")
 OLLAMA_API_BASE := env_var_or_default("OLLAMA_API_BASE_URL", "http://localhost:11434")
 
 # Show all recipes.

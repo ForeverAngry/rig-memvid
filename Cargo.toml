@@ -35,6 +35,10 @@ blake3 = { version = "1", optional = true, default-features = false }
 # `context-projection` feature is enabled so the default build stays
 # free of the rig-compose dep.
 rig-compose = { version = "0.3", path = "../rig-compose", optional = true, default-features = false }
+# Structured observability event emission for the persist hook,
+# compactor, and demotion paths. Pulled only when the `observe`
+# feature is enabled.
+rig-observe = { version = "0.1", path = "../rig-observe", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.102"
@@ -67,6 +71,11 @@ compaction = ["dep:rig-memory", "dep:blake3"]
 # `rig_compose::ContextItem` so hosts can fold memory recall into a
 # shared context pack. Pulls `rig-compose` as a runtime dependency.
 context-projection = ["dep:rig-compose"]
+# Emit structured observability events (`memory.frame_written`,
+# `memory.demoted`, `context.compacted`) from the persist hook,
+# demotion hook, and storing compactor. Pulls `rig-observe`. Off by
+# default so the standard build stays dependency-free.
+observe = ["dep:rig-observe"]
 
 [lints.clippy]
 dbg_macro = "forbid"
