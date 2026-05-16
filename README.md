@@ -31,7 +31,7 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 The crate-local maturity plan lives in [ROADMAP.md](ROADMAP.md). Cross-crate
 coordination lives in
-[`rig-contributions/docs/roadmap.md`](../rig-contributions/docs/roadmap.md).
+[`rig-ecosystem/docs/roadmap.md`](../rig-ecosystem/docs/roadmap.md).
 
 ## Feature Flags
 
