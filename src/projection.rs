@@ -3,7 +3,9 @@
 //! Memvid surfaces two retrieval shapes:
 //!
 //! - [`memvid_core::SearchHit`] from `.mv2`-backed [`crate::MemvidStore`]
-//!   lookups (lexical or vector), and
+//!   lookups (lexical or vector),
+//! - [`memvid_core::MemoryCard`] and [`crate::CardDoc`] from structured
+//!   memory-card context, and
 //! - [`crate::InMemoryHit`] from the no-disk in-process
 //!   [`crate::InMemoryStore`].
 //!
@@ -35,10 +37,11 @@
 //! # }
 //! ```
 
-use memvid_core::SearchHit;
+use memvid_core::{MemoryCard, SearchHit};
 use rig_compose::{ContextItem, ContextSourceKind};
 use serde_json::{Map, Value, json};
 
+use crate::cards_context::{CardDoc, format_card, kind_str, polarity_str};
 use crate::inmem::{Episode, InMemoryHit};
 
 /// Convert a domain-native retrieval hit into a backend-neutral
@@ -100,6 +103,78 @@ fn search_hit_provenance(hit: &SearchHit) -> Value {
     Value::Object(provenance)
 }
 
+fn fallback_score(rank: usize) -> f64 {
+    let rank = u32::try_from(rank).unwrap_or(u32::MAX);
+    1.0 / f64::from(rank.saturating_add(1))
+}
+
+fn card_score(confidence: Option<f32>, rank: usize) -> f64 {
+    confidence
+        .map(f64::from)
+        .unwrap_or_else(|| fallback_score(rank))
+}
+
+fn polarity_value(polarity: impl Into<Option<String>>) -> Value {
+    match polarity.into() {
+        Some(value) => Value::String(value),
+        None => Value::Null,
+    }
+}
+
+fn memory_card_source_id(card: &MemoryCard) -> String {
+    if card.id == 0 {
+        format!(
+            "card/{entity}/{slot}/{frame}",
+            entity = card.entity,
+            slot = card.slot,
+            frame = card.source_frame_id
+        )
+    } else {
+        format!("card/{}", card.id)
+    }
+}
+
+fn card_doc_source_id(doc: &CardDoc) -> String {
+    format!(
+        "card/{entity}/{slot}/{frame}",
+        entity = doc.entity,
+        slot = doc.slot,
+        frame = doc.source_frame_id
+    )
+}
+
+fn memory_card_provenance(card: &MemoryCard) -> Value {
+    let mut provenance = Map::new();
+    provenance.insert("schema_version".into(), json!(1));
+    provenance.insert("resource".into(), Value::String("memvid.card".into()));
+    provenance.insert("card_id".into(), json!(card.id));
+    provenance.insert("entity".into(), Value::String(card.entity.clone()));
+    provenance.insert("slot".into(), Value::String(card.slot.clone()));
+    provenance.insert(
+        "kind".into(),
+        Value::String(kind_str(card.kind).to_string()),
+    );
+    provenance.insert("polarity".into(), json!(card.polarity.map(polarity_str)));
+    provenance.insert("source_frame_id".into(), json!(card.source_frame_id));
+    provenance.insert("source_uri".into(), json!(card.source_uri));
+    provenance.insert("engine".into(), Value::String(card.engine.clone()));
+    provenance.insert("confidence".into(), json!(card.confidence));
+    Value::Object(provenance)
+}
+
+fn card_doc_provenance(doc: &CardDoc) -> Value {
+    json!({
+        "schema_version": 1,
+        "resource": "memvid.card",
+        "entity": doc.entity,
+        "slot": doc.slot,
+        "kind": doc.kind,
+        "polarity": polarity_value(doc.polarity.clone()),
+        "source_frame_id": doc.source_frame_id,
+        "confidence": doc.confidence,
+    })
+}
+
 impl IntoContextItem for SearchHit {
     fn to_context_item(&self, rank: usize) -> ContextItem {
         ContextItem::new(
@@ -131,6 +206,32 @@ impl<E: Episode> IntoContextItem for InMemoryHit<E> {
     }
 }
 
+impl IntoContextItem for MemoryCard {
+    fn to_context_item(&self, rank: usize) -> ContextItem {
+        ContextItem::new(
+            ContextSourceKind::Memory,
+            memory_card_source_id(self),
+            format_card(self),
+        )
+        .with_rank(rank)
+        .with_score(card_score(self.confidence, rank))
+        .with_provenance(memory_card_provenance(self))
+    }
+}
+
+impl IntoContextItem for CardDoc {
+    fn to_context_item(&self, rank: usize) -> ContextItem {
+        ContextItem::new(
+            ContextSourceKind::Memory,
+            card_doc_source_id(self),
+            self.text.clone(),
+        )
+        .with_rank(rank)
+        .with_score(card_score(self.confidence, rank))
+        .with_provenance(card_doc_provenance(self))
+    }
+}
+
 /// Project a slice of [`SearchHit`]s into ranked [`ContextItem`]s.
 ///
 /// The returned vector preserves input order; rank is taken from the
@@ -154,11 +255,32 @@ pub fn inmem_hits_to_context_items<E: Episode>(hits: &[InMemoryHit<E>]) -> Vec<C
         .collect()
 }
 
+/// Project a slice of [`MemoryCard`]s into ranked [`ContextItem`]s.
+#[must_use]
+pub fn memory_cards_to_context_items(cards: &[MemoryCard]) -> Vec<ContextItem> {
+    cards
+        .iter()
+        .enumerate()
+        .map(|(rank, card)| card.to_context_item(rank))
+        .collect()
+}
+
+/// Project a slice of [`CardDoc`]s into ranked [`ContextItem`]s.
+#[must_use]
+pub fn card_docs_to_context_items(docs: &[CardDoc]) -> Vec<ContextItem> {
+    docs.iter()
+        .enumerate()
+        .map(|(rank, doc)| doc.to_context_item(rank))
+        .collect()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
     use super::*;
     use memvid_core::types::FrameId;
+    use memvid_core::{MemoryKind, Polarity, VersionRelation};
+    use rig_compose::{ContextOmissionReason, ContextPack, ContextPackConfig};
 
     #[derive(Clone)]
     struct StubEpisode(&'static str);
@@ -182,6 +304,41 @@ mod tests {
             chunk_text: None,
             score,
             metadata: None,
+        }
+    }
+
+    fn make_card(id: u64, confidence: Option<f32>) -> MemoryCard {
+        MemoryCard {
+            id,
+            kind: MemoryKind::Preference,
+            entity: "Ada".into(),
+            slot: "drink".into(),
+            value: "espresso".into(),
+            polarity: Some(Polarity::Positive),
+            event_date: None,
+            document_date: None,
+            version_key: Some("Ada:drink".into()),
+            version_relation: VersionRelation::Sets,
+            source_frame_id: 42,
+            source_uri: Some("memvid://frame/42".into()),
+            source_offset: Some((7, 15)),
+            engine: "test-extractor".into(),
+            engine_version: "1".into(),
+            confidence,
+            created_at: 99,
+        }
+    }
+
+    fn make_card_doc() -> CardDoc {
+        CardDoc {
+            text: "pref Ada likes espresso".into(),
+            kind: "pref".into(),
+            entity: "Ada".into(),
+            slot: "drink".into(),
+            value: "espresso".into(),
+            polarity: Some("positive".into()),
+            source_frame_id: 42,
+            confidence: Some(0.75),
         }
     }
 
@@ -261,5 +418,81 @@ mod tests {
         assert_eq!(items[0].rank, 0);
         assert_eq!(items[1].rank, 1);
         assert_eq!(items[1].source_id, "ep-b");
+    }
+
+    #[test]
+    fn memory_card_projects_compact_text_and_provenance() {
+        let card = make_card(77, Some(0.8));
+        let item = card.to_context_item(4);
+        assert!(matches!(item.source, ContextSourceKind::Memory));
+        assert_eq!(item.source_id, "card/77");
+        assert_eq!(item.rank, 4);
+        assert!((item.score - 0.8).abs() < 1e-6);
+        assert_eq!(item.text, "pref Ada likes espresso");
+
+        let provenance = item.provenance.as_object().unwrap();
+        assert_eq!(provenance["schema_version"], 1);
+        assert_eq!(provenance["resource"], "memvid.card");
+        assert_eq!(provenance["card_id"], 77);
+        assert_eq!(provenance["entity"], "Ada");
+        assert_eq!(provenance["slot"], "drink");
+        assert_eq!(provenance["kind"], "pref");
+        assert_eq!(provenance["polarity"], "positive");
+        assert_eq!(provenance["source_frame_id"], 42);
+        assert_eq!(provenance["source_uri"], "memvid://frame/42");
+        assert_eq!(provenance["engine"], "test-extractor");
+        let confidence = provenance["confidence"].as_f64().unwrap();
+        assert!((confidence - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn memory_card_without_id_or_confidence_gets_stable_fallbacks() {
+        let card = make_card(0, None);
+        let item = card.to_context_item(2);
+        assert_eq!(item.source_id, "card/Ada/drink/42");
+        assert!((item.score - (1.0_f64 / 3.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn card_doc_projects_with_confidence_and_card_provenance() {
+        let doc = make_card_doc();
+        let item = doc.to_context_item(1);
+        assert_eq!(item.source_id, "card/Ada/drink/42");
+        assert_eq!(item.rank, 1);
+        assert!((item.score - 0.75).abs() < 1e-6);
+        assert_eq!(item.text, "pref Ada likes espresso");
+
+        let provenance = item.provenance.as_object().unwrap();
+        assert_eq!(provenance["resource"], "memvid.card");
+        assert_eq!(provenance["schema_version"], 1);
+        assert_eq!(provenance["entity"], "Ada");
+        assert_eq!(provenance["polarity"], "positive");
+        let confidence = provenance["confidence"].as_f64().unwrap();
+        assert!((confidence - 0.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn card_and_search_items_pack_with_stable_omissions() {
+        let mut items = memory_cards_to_context_items(&[make_card(1, Some(0.9))]);
+        items.extend(search_hits_to_context_items(&[make_hit(1, Some(0.4), 10)]));
+        let mut docs = card_docs_to_context_items(&[CardDoc {
+            text: "this card is deliberately too large for the remaining budget".into(),
+            confidence: None,
+            ..make_card_doc()
+        }]);
+        docs[0].rank = 2;
+        items.extend(docs);
+
+        items[0].rank = 0;
+        items[1].rank = 1;
+        let pack = ContextPack::pack(items, ContextPackConfig::new(50).with_max_items(8));
+
+        assert_eq!(pack.selected.len(), 2);
+        assert_eq!(pack.selected[0].source_id, "card/1");
+        assert_eq!(pack.selected[1].source_id, "10");
+        assert_eq!(pack.omitted.len(), 1);
+        assert_eq!(pack.omitted[0].reason, ContextOmissionReason::OverBudget);
+        let provenance = pack.selected[0].provenance.as_object().unwrap();
+        assert_eq!(provenance["resource"], "memvid.card");
     }
 }

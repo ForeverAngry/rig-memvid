@@ -44,7 +44,7 @@ coordination lives in
 | `temporal` | no | Temporal track support via `memvid-core/temporal_track`. | not exercised by `just check` |
 | `encryption` | no | At-rest encryption via `memvid-core/encryption`. | not exercised by `just check` |
 | `compaction` | no | `MemvidDemotionHook` + `MemvidStoringCompactor` adapters onto `rig::memory::DemotionHook` / `rig::memory::Compactor`. Pulls `rig-memory = 0.1`. | clippy + tests with `--no-default-features --features "lex,compaction"` and via `--all-features` |
-| `context-projection` | no | Projects `MemvidStore` / `InMemoryStore` retrieval hits into `rig_compose::ContextItem`. Pulls `rig-compose = 0.3`. | clippy + tests with `--no-default-features --features "lex,context-projection"` and via `--all-features` |
+| `context-projection` | no | Projects `MemvidStore` / `InMemoryStore` retrieval hits plus structured memory cards into `rig_compose::ContextItem`. Pulls `rig-compose = 0.3`. | clippy + tests with `--no-default-features --features "lex,context-projection"` and via `--all-features` |
 | `observe` | no | Emits `rig-observe` `ObservabilityEvent`s (`memory.frame_written`, `memory.demoted`, `context.compacted`) from `MemvidPersistHook`, `MemvidDemotionHook`, and `MemvidStoringCompactor`. Pulls `rig-observe = 0.1`. | covered by `--all-features` |
 
 ## Key Types
@@ -182,6 +182,29 @@ that memvid's extractor can miss, such as `Alice is allergic to peanuts`
 -> `profile alice/allergy = peanuts` and `Bob is Alice's manager at Acme.
 He reports to Carol, the VP.` -> `relationship alice/manager = Bob`,
 `relationship bob/reports_to = Carol`, and `profile carol/title = VP`.
+
+### Projecting memory into compose context
+
+With the optional `context-projection` feature enabled, `rig-memvid` can
+project both episodic retrieval hits and structured memory cards into
+`rig_compose::ContextItem`s for shared `ContextPack` budgeting. Card
+projection preserves compact card text, rank, confidence-or-fallback score,
+and provenance fields such as entity, slot, kind, polarity, source frame,
+source URI, engine, and schema version.
+
+```rust,no_run
+use rig_compose::{ContextPack, ContextPackConfig};
+use rig_memvid::projection::memory_cards_to_context_items;
+use rig_memvid::MemvidStore;
+
+# fn run(store: MemvidStore) -> Result<(), Box<dyn std::error::Error>> {
+let cards = store.entity_memories("alice")?;
+let items = memory_cards_to_context_items(&cards);
+let pack = ContextPack::pack(items, ContextPackConfig::new(2_000));
+let prompt_context = pack.render_text();
+# let _ = prompt_context;
+# Ok(()) }
+```
 
 For no-disk tests or offline modes, [src/inmem.rs](src/inmem.rs) includes unit tests for append, lookup, deterministic ranking, zero-score filtering, and Unicode normalization.
 

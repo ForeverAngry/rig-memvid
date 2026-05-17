@@ -55,8 +55,15 @@ All notable changes to `rig-memvid` will be documented in this file.
   `rig-resources` projection vocabulary so coordinators can fold memvid
   recall, resource lookups, and tool results into a single bounded
   context pack. Missing engine scores fall back to `1 / (rank + 1)` so
-  packers that key off `score` alone stay monotonic. Five unit tests
+  packers that key off `score` alone stay monotonic. Projection unit tests
   plus the module doctest live alongside the module.
+- `context-projection` now also projects structured memory cards via
+  `memory_cards_to_context_items` and `card_docs_to_context_items`.
+  `MemoryCard` projection reuses the compact `MemoryCardContext` card
+  rendering, scores from extractor confidence when present, falls back
+  to `1 / (rank + 1)`, and records card provenance (`entity`, `slot`,
+  `kind`, `polarity`, `source_frame_id`, `source_uri`, `engine`,
+  `confidence`, `schema_version`) for downstream packers and evals.
 
 - **Compaction integration with `rig-core` memory traits** behind a new
   optional `compaction` feature (off by default; pulls
