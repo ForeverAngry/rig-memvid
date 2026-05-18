@@ -65,7 +65,7 @@ The crate re-exports `memvid_core` so callers can construct `PutOptions`, `AclCo
 
 It is community-maintained and not part of the upstream `rig` repository.
 
-## Usage
+## Quick start
 
 Persistent store behavior is covered by [tests/smoke.rs](tests/smoke.rs) and [tests/integration.rs](tests/integration.rs). The examples [examples/chatbot_with_memory.rs](examples/chatbot_with_memory.rs), [examples/chatbot_with_memory_ollama.rs](examples/chatbot_with_memory_ollama.rs), [examples/inspect_memory.rs](examples/inspect_memory.rs), [examples/livetest_relationships.rs](examples/livetest_relationships.rs), and [examples/livetest_relationships_mlx.rs](examples/livetest_relationships_mlx.rs) show end-to-end archive usage.
 
@@ -97,6 +97,14 @@ let hits: Vec<(f64, String, serde_json::Value)> = store.top_n(request).await?;
 assert!(!hits.is_empty());
 # Ok(()) }
 ```
+
+The `.mv2` archive lives exactly where the builder path points. In local
+development that can be a relative path such as `./agent_memory.mv2`; in a
+container or Kubernetes workload it should be a mounted persistent volume path
+such as `/var/lib/agent/memory.mv2`. Object stores are useful for snapshots or
+backup/restore jobs, but they are not a live `MemvidStore` backend today
+because Memvid expects normal filesystem I/O and locking around the active
+archive.
 
 ### Structured memory (entities, slots, preferences)
 
