@@ -96,6 +96,7 @@ clippy:
     cargo clippy --no-default-features --features "lex,encryption" --all-targets -- -D warnings
     cargo clippy --no-default-features --features "lex,compaction" --all-targets -- -D warnings
     cargo clippy --no-default-features --features "lex,context-projection" --all-targets -- -D warnings
+    cargo clippy --no-default-features --features "lex,observe" --all-targets -- -D warnings
     cargo clippy --all-features --all-targets -- -D warnings
 
 # Tests across CI feature combos.
@@ -106,6 +107,7 @@ test:
     cargo test --no-default-features --features "lex,api_embed" --all-targets
     cargo test --no-default-features --features "lex,compaction" --all-targets
     cargo test --no-default-features --features "lex,context-projection" --all-targets
+    cargo test --no-default-features --features "lex,observe" --all-targets
     cargo test --all-features --all-targets
 
 # MSRV gate (Rust 1.89).
