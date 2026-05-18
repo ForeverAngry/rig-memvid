@@ -189,9 +189,9 @@ where
                         .filter_map(render_message_text)
                         .map(|s| s.len())
                         .sum();
-                    rig_observe::emit_kind(
+                    rig_tap::emit_kind(
                         conversation_id,
-                        rig_observe::EventKind::ContextCompacted {
+                        rig_tap::EventKind::ContextCompacted {
                             evicted_count: evicted.len(),
                             evicted_bytes,
                             carry_over: carry_over.is_some(),

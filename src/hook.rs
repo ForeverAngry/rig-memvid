@@ -101,7 +101,7 @@ pub struct MemoryConfig {
     /// [`crate::MemvidStore::entity_preferences`], and the rest of the
     /// memory-card surface. Defaults to `true`.
     pub extract_triplets: bool,
-    /// Conversation ID stamped on `rig_observe` events emitted by this
+    /// Conversation ID stamped on `rig_tap` events emitted by this
     /// hook (`memory.frame_written`). When `None`, the hook falls back to
     /// [`Self::scope`] and finally to `"default"` so existing consumers
     /// keep working, but explicitly setting this field is preferred: it
@@ -230,13 +230,13 @@ impl<M> MemvidPersistHook<M> {
             }
         };
         #[cfg(feature = "observe")]
-        rig_observe::emit_kind(
+        rig_tap::emit_kind(
             self.config
                 .observe_conversation_id
                 .as_deref()
                 .or(scope.as_deref())
                 .unwrap_or("default"),
-            rig_observe::EventKind::MemoryFrameWritten {
+            rig_tap::EventKind::MemoryFrameWritten {
                 frame_kind: "turn".to_string(),
                 // memvid does not expose a cheap cumulative frame count
                 // from this hot path.

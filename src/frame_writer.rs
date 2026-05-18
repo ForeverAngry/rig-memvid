@@ -73,9 +73,9 @@ pub(crate) fn write_frame(
         .insert(key)
         .map_err(|err| MemoryError::backend(Box::new(err)))?;
     #[cfg(feature = "observe")]
-    rig_observe::emit_kind(
+    rig_tap::emit_kind(
         conversation_id,
-        rig_observe::EventKind::MemoryFrameWritten {
+        rig_tap::EventKind::MemoryFrameWritten {
             frame_kind: kind.as_str().to_string(),
             // memvid does not expose a cheap O(1) cumulative frame count
             // from this path.
