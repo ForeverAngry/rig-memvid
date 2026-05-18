@@ -8,7 +8,7 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ### Added
 
-- **Optional `observe` feature.** Pulls `rig-observe` as a runtime
+- **Optional `observe` feature.** Pulls `rig-tap` as a runtime
   dependency and emits structured observability events from three tap
   points: `memory.frame_written` whenever the persist hook,
   compactor, or demotion hook lands a new (non-dedup) frame;

@@ -38,7 +38,7 @@ rig-compose = { version = "0.3", path = "../rig-compose", optional = true, defau
 # Structured observability event emission for the persist hook,
 # compactor, and demotion paths. Pulled only when the `observe`
 # feature is enabled.
-rig-observe = { version = "0.1", path = "../rig-observe", optional = true }
+rig-tap = { version = "0.1", path = "../rig-tap", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.102"
@@ -73,9 +73,9 @@ compaction = ["dep:rig-memory", "dep:blake3"]
 context-projection = ["dep:rig-compose"]
 # Emit structured observability events (`memory.frame_written`,
 # `memory.demoted`, `context.compacted`) from the persist hook,
-# demotion hook, and storing compactor. Pulls `rig-observe`. Off by
+# demotion hook, and storing compactor. Pulls `rig-tap`. Off by
 # default so the standard build stays dependency-free.
-observe = ["dep:rig-observe"]
+observe = ["dep:rig-tap"]
 
 [lints.clippy]
 dbg_macro = "forbid"
