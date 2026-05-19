@@ -20,7 +20,8 @@
 //! you type is sent to the agent; user turns are appended to memory and surface
 //! on later turns via `dynamic_context`. Re-running the binary retains
 //! whatever previous runs wrote. By default, first-person user turns are bound
-//! to the stable principal `User`; override with `MEMVID_PRINCIPAL=Alice`.
+//! to the stable principal `User`; set `MEMVID_PRINCIPAL=Alice` to use a
+//! different name, or `MEMVID_PRINCIPAL=` (empty) to disable principal binding.
 //!
 //! REPL commands: `/recall <query>` to peek at the lexical retrieval hits
 //! for a query without prompting the model, `/quit` (or Ctrl-D) to exit.
@@ -169,11 +170,16 @@ async fn main() -> Result<()> {
         .base_url(&base_url)
         .build()?;
     let model = client.completion_model(&model_name);
-    let principal = std::env::var("MEMVID_PRINCIPAL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "User".to_string());
-    println!("Binding user turns to principal `{principal}` for structured memory extraction");
+    let principal: Option<String> = match std::env::var("MEMVID_PRINCIPAL").ok().as_deref() {
+        None => Some("User".to_string()),        // unset → default "User"
+        Some(s) if s.trim().is_empty() => None, // empty string → opt-out
+        Some(s) => Some(s.to_string()),
+    };
+    if let Some(name) = principal.as_deref() {
+        println!("Binding user turns to principal `{name}` for structured memory extraction");
+    } else {
+        println!("No principal set; using entity-mention card selection.");
+    }
     let persist_assistant = std::env::var("MEMVID_PERSIST_ASSISTANT")
         .map(|value| !matches!(value.as_str(), "0" | "false" | "FALSE" | "False"))
         .unwrap_or(false);
@@ -185,13 +191,16 @@ async fn main() -> Result<()> {
             commit_each_turn: true,
             default_tags: vec!["chatbot".into(), "ollama".into()],
             scope: Some("chatbot_memory_ollama".into()),
-            principal: Some(principal.clone()),
+            principal: principal.clone(),
             persist_assistant,
             ..MemoryConfig::default()
         },
     );
 
-    let card_selection = rig_memvid::CardSelection::ForPrincipal(principal.clone());
+    let card_selection = match &principal {
+        Some(p) => rig_memvid::CardSelection::ForPrincipal(p.clone()),
+        None => rig_memvid::CardSelection::EntityMentions,
+    };
     let cards_ctx = rig_memvid::MemoryCardContext::new(store.clone(), card_selection);
 
     let agent = rig::agent::AgentBuilder::new(model)
@@ -216,10 +225,10 @@ async fn main() -> Result<()> {
                  Note: memvid's lex index is BM25 keyword-AND with stopword\n\
                  filtering. Phrase recall queries with content keywords\n\
                  (e.g. `pizza`, not `what food do you like?`).\n\
-                 Defaults: MEMVID_PRINCIPAL=User and MEMVID_PERSIST_ASSISTANT=false,\n\
-                 so first-person turns become stable user-profile memory without\n\
-                 assistant paraphrases polluting recall. Override either env var\n\
-                 when you need a different archive policy.\n\
+                 Defaults: MEMVID_PRINCIPAL=User and MEMVID_PERSIST_ASSISTANT=false.\n\
+                 Set MEMVID_PRINCIPAL= (empty) to disable principal binding and\n\
+                 fall back to entity-mention card selection.\n\
+                 Set MEMVID_PERSIST_ASSISTANT=1 to archive assistant turns too.\n\
                  Memory file: {}",
         path.display()
     );
