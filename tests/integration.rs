@@ -461,3 +461,309 @@ async fn top_n_deserialises_search_hit_directly() -> Result<()> {
     );
     Ok(())
 }
+
+// --- MemoryCard pass-through ----------------------------------------------
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn memory_card_passthrough_round_trip() -> Result<()> {
+    use memvid_core::{MemoryCard, MemoryCardBuilder, MemoryKind, Polarity};
+
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("cards.mv2"))?;
+
+    // Seed a frame so memory cards can reference a real source_frame_id.
+    let frame_id = store.put_text("alice loves rust", PutOptions::default())?;
+
+    // Build a couple of cards directly via the lock — exercises the
+    // memvid put path and our pass-through readers.
+    let fact: MemoryCard = MemoryCardBuilder::new()
+        .fact()
+        .entity("alice")
+        .slot("language")
+        .value("rust")
+        .source(frame_id, None)
+        .engine("test", "0")
+        .build(1)
+        .map_err(|e| anyhow::anyhow!("build fact: {e}"))?;
+    let pref: MemoryCard = MemoryCardBuilder::new()
+        .preference()
+        .entity("alice")
+        .slot("food")
+        .value("pizza")
+        .polarity(Polarity::Positive)
+        .source(frame_id, None)
+        .engine("test", "0")
+        .build(2)
+        .map_err(|e| anyhow::anyhow!("build pref: {e}"))?;
+
+    store.put_memory_card(fact)?;
+    store.put_memory_card(pref)?;
+
+    assert!(store.memory_card_count()? >= 2);
+
+    let alice_cards = store.entity_memories("alice")?;
+    assert_eq!(alice_cards.len(), 2, "expected 2 cards for alice");
+
+    let lang = store
+        .current_memory("alice", "language")?
+        .ok_or_else(|| anyhow::anyhow!("missing alice/language"))?;
+    assert_eq!(lang.kind, MemoryKind::Fact);
+    assert_eq!(lang.value, "rust");
+
+    let prefs = store.entity_preferences("alice")?;
+    assert_eq!(prefs.len(), 1);
+    let p = prefs.first().ok_or_else(|| anyhow::anyhow!("no pref"))?;
+    assert_eq!(p.slot, "food");
+    assert_eq!(p.polarity, Some(Polarity::Positive));
+
+    let foods = store.aggregate_memory_slot("alice", "food")?;
+    assert!(foods.iter().any(|v| v == "pizza"));
+
+    // Unknown entity returns empty, not an error.
+    assert!(store.entity_memories("nobody")?.is_empty());
+    assert!(store.current_memory("nobody", "x")?.is_none());
+
+    Ok(())
+}
+
+// --- MemoryCardContext ----------------------------------------------------
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn card_context_returns_entity_mention_hits() -> Result<()> {
+    use memvid_core::{MemoryCard, MemoryCardBuilder};
+    use rig::vector_store::request::VectorSearchRequestBuilder;
+    use rig_memvid::{CardDoc, CardSelection, MemoryCardContext};
+
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("ctx.mv2"))?;
+    let frame = store.put_text("seed", PutOptions::default())?;
+
+    let alice_card: MemoryCard = MemoryCardBuilder::new()
+        .fact()
+        .entity("alice")
+        .slot("language")
+        .value("rust")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(0)
+        .map_err(|e| anyhow::anyhow!("build alice: {e}"))?;
+    let bob_card: MemoryCard = MemoryCardBuilder::new()
+        .fact()
+        .entity("bob")
+        .slot("language")
+        .value("python")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(0)
+        .map_err(|e| anyhow::anyhow!("build bob: {e}"))?;
+    store.put_memory_card(alice_card)?;
+    store.put_memory_card(bob_card)?;
+
+    let ctx = MemoryCardContext::new(store.clone(), CardSelection::EntityMentions);
+
+    let req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("what does alice know about?")
+            .samples(8)
+            .build();
+    let hits: Vec<(f64, String, CardDoc)> = ctx.top_n(req).await?;
+
+    assert_eq!(hits.len(), 1, "only alice should match");
+    let (score, _id, doc) = hits.first().expect("first hit");
+    assert!(*score > 0.0);
+    assert_eq!(doc.entity, "alice");
+    assert_eq!(doc.slot, "language");
+    assert_eq!(doc.value, "rust");
+    assert!(doc.text.contains("alice"));
+    Ok(())
+}
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn card_context_for_principal_ignores_query_text() -> Result<()> {
+    use memvid_core::{MemoryCard, MemoryCardBuilder};
+    use rig::vector_store::request::VectorSearchRequestBuilder;
+    use rig_memvid::{CardDoc, CardSelection, MemoryCardContext};
+
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("principal.mv2"))?;
+    let frame = store.put_text("seed", PutOptions::default())?;
+
+    let alice_card: MemoryCard = MemoryCardBuilder::new()
+        .preference()
+        .entity("alice")
+        .slot("drink")
+        .value("espresso")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(0)
+        .map_err(|e| anyhow::anyhow!("build alice: {e}"))?;
+    let bob_card: MemoryCard = MemoryCardBuilder::new()
+        .fact()
+        .entity("bob")
+        .slot("role")
+        .value("manager")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(1)
+        .map_err(|e| anyhow::anyhow!("build bob: {e}"))?;
+    let noisy_alice_card: MemoryCard = MemoryCardBuilder::new()
+        .preference()
+        .entity("alice really")
+        .slot("drink")
+        .value("espresso")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(2)
+        .map_err(|e| anyhow::anyhow!("build noisy alice: {e}"))?;
+    store.put_memory_card(alice_card)?;
+    store.put_memory_card(bob_card)?;
+    store.put_memory_card(noisy_alice_card)?;
+
+    let ctx = MemoryCardContext::new(store, CardSelection::ForPrincipal("Alice".into()));
+
+    let req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("what should I drink?")
+            .samples(8)
+            .build();
+    let hits: Vec<(f64, String, CardDoc)> = ctx.top_n(req).await?;
+
+    assert_eq!(hits.len(), 2, "only principal cards should match");
+    let (_score, _id, doc) = hits.first().expect("first hit");
+    assert!(doc.entity.contains("alice"));
+    assert_eq!(doc.slot, "drink");
+    assert_eq!(doc.value, "espresso");
+    Ok(())
+}
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn card_context_for_principal_ranks_by_query_intent() -> Result<()> {
+    use memvid_core::{MemoryCard, MemoryCardBuilder};
+    use rig::vector_store::request::VectorSearchRequestBuilder;
+    use rig_memvid::{CardDoc, CardSelection, MemoryCardContext};
+
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("principal_rank.mv2"))?;
+    let frame = store.put_text("seed", PutOptions::default())?;
+
+    let location: MemoryCard = MemoryCardBuilder::new()
+        .fact()
+        .entity("alice")
+        .slot("location")
+        .value("Berlin")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(1)
+        .map_err(|e| anyhow::anyhow!("build location: {e}"))?;
+    let allergy: MemoryCard = MemoryCardBuilder::new()
+        .profile()
+        .entity("alice")
+        .slot("allergy")
+        .value("peanuts")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(2)
+        .map_err(|e| anyhow::anyhow!("build allergy: {e}"))?;
+    store.put_memory_card(location)?;
+    store.put_memory_card(allergy)?;
+
+    let ctx = MemoryCardContext::new(store, CardSelection::ForPrincipal("Alice".into()));
+
+    let where_req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("Where does Alice live?")
+            .samples(1)
+            .build();
+    let where_hits: Vec<(f64, String, CardDoc)> = ctx.top_n(where_req).await?;
+    let where_doc = where_hits
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("missing location hit"))?;
+    assert_eq!(where_doc.2.slot, "location");
+
+    let food_req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("What food should I avoid serving Alice?")
+            .samples(1)
+            .build();
+    let food_hits: Vec<(f64, String, CardDoc)> = ctx.top_n(food_req).await?;
+    let food_doc = food_hits
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("missing allergy hit"))?;
+    assert_eq!(food_doc.2.slot, "allergy");
+
+    Ok(())
+}
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn card_context_for_principal_includes_relationship_targets() -> Result<()> {
+    use memvid_core::{MemoryCard, MemoryCardBuilder};
+    use rig::vector_store::request::VectorSearchRequestBuilder;
+    use rig_memvid::{CardDoc, CardSelection, MemoryCardContext};
+
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("principal_relationships.mv2"))?;
+    let frame = store.put_text("seed", PutOptions::default())?;
+
+    let alice_manager: MemoryCard = MemoryCardBuilder::new()
+        .relationship()
+        .entity("alice")
+        .slot("manager")
+        .value("Bob")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(1)
+        .map_err(|e| anyhow::anyhow!("build alice manager: {e}"))?;
+    let bob_reports_to: MemoryCard = MemoryCardBuilder::new()
+        .relationship()
+        .entity("bob")
+        .slot("reports_to")
+        .value("Carol")
+        .source(frame, None)
+        .engine("test", "0")
+        .build(2)
+        .map_err(|e| anyhow::anyhow!("build bob reports_to: {e}"))?;
+    store.put_memory_card(alice_manager)?;
+    store.put_memory_card(bob_reports_to)?;
+
+    let ctx = MemoryCardContext::new(store, CardSelection::ForPrincipal("Alice".into()));
+    let req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("Who is Bob's manager?")
+            .samples(2)
+            .build();
+    let hits: Vec<(f64, String, CardDoc)> = ctx.top_n(req).await?;
+
+    let first = hits
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("missing reporting hit"))?;
+    assert_eq!(first.2.entity, "bob");
+    assert_eq!(first.2.slot, "reports_to");
+    assert_eq!(first.2.value, "Carol");
+
+    Ok(())
+}
+
+#[cfg(feature = "lex")]
+#[tokio::test]
+async fn card_context_empty_archive_returns_no_hits() -> Result<()> {
+    use rig::vector_store::request::VectorSearchRequestBuilder;
+    use rig_memvid::{CardDoc, CardSelection, MemoryCardContext};
+
+    let dir = tempdir()?;
+    let store = lex_store(&dir.path().join("empty.mv2"))?;
+    let ctx = MemoryCardContext::new(store, CardSelection::EntityMentions);
+
+    let req: VectorSearchRequest<MemvidFilter> =
+        VectorSearchRequestBuilder::<MemvidFilter>::default()
+            .query("anything")
+            .samples(4)
+            .build();
+    let hits: Vec<(f64, String, CardDoc)> = ctx.top_n(req).await?;
+    assert!(hits.is_empty());
+    Ok(())
+}

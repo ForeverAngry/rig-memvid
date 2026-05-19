@@ -188,6 +188,172 @@ impl MemvidStore {
         let resp = guard.search(request)?;
         Ok(resp)
     }
+
+    /// Total number of [`memvid_core::MemoryCard`]s currently stored on
+    /// the memories track.
+    ///
+    /// Cards are produced automatically when frames are written with
+    /// [`memvid_core::PutOptions::extract_triplets`] enabled (the default,
+    /// also exposed through [`crate::MemoryConfig::extract_triplets`]).
+    /// They form a structured Subject-Predicate-Object index over the
+    /// underlying free-text frames.
+    pub fn memory_card_count(&self) -> Result<usize, MemvidError> {
+        Ok(self.lock()?.memory_card_count())
+    }
+
+    /// Snapshot of every [`memvid_core::MemoryCard`] currently on the
+    /// memories track, cloned to owned values so the inner lock is
+    /// released before returning.
+    ///
+    /// Useful for callers that need to filter / sort across the entire
+    /// card set (for example
+    /// [`crate::MemoryCardContext`]'s `EntityMentions` selection
+    /// strategy). Avoid in hot paths against very large archives:
+    /// returns one allocation per card.
+    pub fn all_memory_cards(&self) -> Result<Vec<memvid_core::MemoryCard>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard.memories().cards().to_vec())
+    }
+
+    /// Insert a fully-built [`memvid_core::MemoryCard`] onto the memories
+    /// track. The card's `id` field is overwritten with a freshly assigned
+    /// [`memvid_core::MemoryCardId`], which is returned.
+    ///
+    /// Useful for tests, deterministic seeding, or callers that have their
+    /// own structured-extraction pipeline upstream of memvid's.
+    pub fn put_memory_card(
+        &self,
+        card: memvid_core::MemoryCard,
+    ) -> Result<memvid_core::MemoryCardId, MemvidError> {
+        let mut guard = self.lock()?;
+        Ok(guard.put_memory_card(card)?)
+    }
+
+    /// All memory cards associated with `entity`, returned as owned
+    /// values (the underlying lock is released before returning).
+    ///
+    /// Returns an empty `Vec` if the entity is unknown. Pair with
+    /// [`MemvidStore::current_memory`] when only the latest non-retracted
+    /// value of a single slot is needed.
+    pub fn entity_memories(
+        &self,
+        entity: &str,
+    ) -> Result<Vec<memvid_core::MemoryCard>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard
+            .get_entity_memories(entity)
+            .into_iter()
+            .cloned()
+            .collect())
+    }
+
+    /// The most recent non-retracted card for the given `entity` and
+    /// `slot`, if any. Mirrors
+    /// [`memvid_core::Memvid::get_current_memory`].
+    pub fn current_memory(
+        &self,
+        entity: &str,
+        slot: &str,
+    ) -> Result<Option<memvid_core::MemoryCard>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard.get_current_memory(entity, slot).cloned())
+    }
+
+    /// All preference-kind cards for `entity`, in insertion order.
+    pub fn entity_preferences(
+        &self,
+        entity: &str,
+    ) -> Result<Vec<memvid_core::MemoryCard>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard.get_preferences(entity).into_iter().cloned().collect())
+    }
+
+    /// Aggregate every distinct value recorded for `entity`/`slot` across
+    /// all sessions. Useful for slots that legitimately accumulate (lists
+    /// of hobbies, places lived in, etc.).
+    pub fn aggregate_memory_slot(
+        &self,
+        entity: &str,
+        slot: &str,
+    ) -> Result<Vec<String>, MemvidError> {
+        Ok(self.lock()?.aggregate_memory_slot(entity, slot))
+    }
+
+    /// Event-kind cards for `entity` in chronological order.
+    pub fn memory_timeline(
+        &self,
+        entity: &str,
+    ) -> Result<Vec<memvid_core::MemoryCard>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard
+            .get_memory_timeline(entity)
+            .into_iter()
+            .cloned()
+            .collect())
+    }
+
+    // ---- Logic-Mesh (graph) pass-through ---------------------------------
+
+    /// Number of entity nodes in the underlying memvid Logic-Mesh.
+    ///
+    /// The Logic-Mesh is memvid's graph track: typed entity nodes
+    /// ([`memvid_core::MeshNode`]) connected by relationship edges
+    /// ([`memvid_core::MeshEdge`]). Populated automatically when frames
+    /// are written with NER-style enrichment (controlled by
+    /// [`memvid_core::PutOptions`]).
+    pub fn mesh_node_count(&self) -> Result<usize, MemvidError> {
+        Ok(self.lock()?.mesh_node_count())
+    }
+
+    /// Number of relationship edges in the Logic-Mesh.
+    pub fn mesh_edge_count(&self) -> Result<usize, MemvidError> {
+        Ok(self.lock()?.mesh_edge_count())
+    }
+
+    /// Find an entity node by canonical or display name (case-insensitive).
+    pub fn find_entity(&self, name: &str) -> Result<Option<memvid_core::MeshNode>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard.find_entity(name).cloned())
+    }
+
+    /// All entity nodes mentioned in `frame_id`. Returns owned values
+    /// so the inner lock is released before returning.
+    pub fn frame_entities(&self, frame_id: u64) -> Result<Vec<memvid_core::MeshNode>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard
+            .frame_entities(frame_id)
+            .into_iter()
+            .cloned()
+            .collect())
+    }
+
+    /// All entity nodes of the given [`memvid_core::EntityKind`].
+    pub fn entities_by_kind(
+        &self,
+        kind: memvid_core::EntityKind,
+    ) -> Result<Vec<memvid_core::MeshNode>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard.entities_by_kind(kind).into_iter().cloned().collect())
+    }
+
+    /// Traverse the Logic-Mesh starting from `start`, following edges
+    /// of `link_type` up to `hops` deep. Wraps
+    /// [`memvid_core::Memvid::follow`].
+    ///
+    /// Useful for "who reports to alice's manager?"-style relationship
+    /// queries. Returns the result list directly; callers that want
+    /// streaming traversal should call memvid's `logic_mesh()` API by
+    /// holding their own clone of the inner [`memvid_core::Memvid`]
+    /// handle.
+    pub fn follow_relationship(
+        &self,
+        start: &str,
+        link_type: &str,
+        hops: usize,
+    ) -> Result<Vec<memvid_core::FollowResult>, MemvidError> {
+        let guard = self.lock()?;
+        Ok(guard.follow(start, link_type, hops))
+    }
 }
 
 /// Builder for [`MemvidStore`].

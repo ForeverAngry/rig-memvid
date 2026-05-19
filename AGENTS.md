@@ -29,13 +29,16 @@ primitives sharing an `Arc<Mutex<Memvid>>`:
 
 ## Features
 
-Default `lex`. Optional: `vec`, `api_embed`, `temporal`, `encryption`. Gate
-optional code with `#[cfg(feature = "...")]`. Code must build under all CI
-combos:
+Default `lex,simd`. Optional: `vec`, `api_embed`, `temporal`, `encryption`,
+`compaction`, `context-projection`, and `observe`. Gate optional code with
+`#[cfg(feature = "...")]`. Code must build under all CI combos:
 
 - `--all-features`
 - `--no-default-features --features "lex,vec"`
 - `--no-default-features --features "lex,api_embed"`
+- `--no-default-features --features "lex,compaction"`
+- `--no-default-features --features "lex,context-projection"`
+- `--no-default-features --features "lex,observe"`
 
 ## Validation
 
