@@ -465,7 +465,7 @@ async fn top_n_deserialises_search_hit_directly() -> Result<()> {
 // --- MemoryCard pass-through ----------------------------------------------
 
 #[cfg(feature = "lex")]
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn memory_card_passthrough_round_trip() -> Result<()> {
     use memvid_core::{MemoryCard, MemoryCardBuilder, MemoryKind, Polarity};
 

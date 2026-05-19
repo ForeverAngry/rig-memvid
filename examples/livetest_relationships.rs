@@ -55,7 +55,9 @@ mod app {
             )
             .try_init();
 
-        let path = PathBuf::from("livetest.mv2");
+        let path = PathBuf::from(
+            std::env::var("MEMVID_PATH").unwrap_or_else(|_| "livetest.mv2".to_string()),
+        );
         let store = MemvidStore::builder()
             .path(&path)
             .enable_lex()
@@ -65,7 +67,8 @@ mod app {
 
         let base_url = std::env::var("OLLAMA_API_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:11434".to_string());
-        let model_name = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen3.5:9b".to_string());
+        let model_name =
+            std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen3.5:9b".to_string());
         println!("Ollama @ {base_url}, model = {model_name}");
 
         let client = ollama::Client::builder()

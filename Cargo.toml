@@ -44,7 +44,7 @@ rig-tap = { version = "0.1", path = "../rig-tap", optional = true }
 anyhow = "1.0.102"
 tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rig-compose = { version = "0.3", path = "../rig-compose" }
+rig-compose = { version = "0.3" }
 tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

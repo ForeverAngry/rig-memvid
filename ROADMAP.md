@@ -1,6 +1,6 @@
 # rig-memvid Roadmap
 
-This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate coordination summary lives in [`rig-ecosystem/docs/roadmap.md`](../rig-ecosystem/docs/roadmap.md).
+This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate coordination summary lives in the [rig-ecosystem docs](https://github.com/ForeverAngry/rig-ecosystem).
 
 ## Role
 
@@ -33,14 +33,10 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
 4. Pin live Ollama examples to explicit models and fail loudly when the requested model is unavailable.
 5. Add eval fixtures that assert selected, omitted, compacted, and used memory.
 6. Track upstream Rig compaction outputs and wire them into memory candidates once that surface settles.
-7. Revisit upstream `rig-memory` after the PR #1748 memory traits and a
-   non-stub `rig-memory` crate are released: evaluate a
+7. Revisit upstream `rig-memory` after PR 1756 is released: evaluate a
    `DemotionHook` / long-tail memory adapter that writes demoted conversation
    turns into `MemvidStore`, and keep the integration optional so
    `rig-memvid` can continue to depend only on `rig-core` for default builds.
-   _Done in Unreleased_: `MemvidDemotionHook` and `MemvidStoringCompactor`
-   ship behind the optional `compaction` feature, which pulls
-   `rig-memory = 0.1` only when enabled. Default builds are unchanged.
 
 ## Maturity Bar
 
