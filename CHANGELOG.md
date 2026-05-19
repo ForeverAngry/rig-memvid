@@ -192,6 +192,16 @@ All notable changes to `rig-memvid` will be documented in this file.
   `/entity <name>`, `/prefs <name>`, `/slot <entity> <slot>`, and an
   augmented `/stats` that also reports `memory_cards`.
 
+## [0.1.5](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.4...v0.1.5) - 2026-05-12
+
+### Added
+
+- *(features)* Restore memvid-core simd default ([#7](https://github.com/ForeverAngry/rig-memvid/pull/7))
+
+### Documentation
+
+- Remove retired repo references
+
 ## [0.1.4](https://github.com/ForeverAngry/rig-memvid/compare/v0.1.3...v0.1.4) - 2026-05-06
 
 ### CI
