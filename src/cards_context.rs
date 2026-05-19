@@ -271,7 +271,7 @@ fn is_word_byte(b: u8) -> bool {
 /// Format: `<kind> <entity>/<slot> = <value>[ (<polarity>)]`. Kept short
 /// on purpose: dense structured facts cost more in the model's context
 /// budget than free-text frames.
-fn format_card(card: &MemoryCard) -> String {
+pub(crate) fn format_card(card: &MemoryCard) -> String {
     let polarity = match card.polarity {
         Some(Polarity::Positive) => " (+)",
         Some(Polarity::Negative) => " (-)",
@@ -349,7 +349,7 @@ fn format_card(card: &MemoryCard) -> String {
     )
 }
 
-fn kind_str(kind: MemoryKind) -> &'static str {
+pub(crate) fn kind_str(kind: MemoryKind) -> &'static str {
     match kind {
         MemoryKind::Fact => "fact",
         MemoryKind::Preference => "pref",
@@ -611,7 +611,7 @@ where
     }
 }
 
-fn polarity_str(p: Polarity) -> &'static str {
+pub(crate) fn polarity_str(p: Polarity) -> &'static str {
     match p {
         Polarity::Positive => "positive",
         Polarity::Negative => "negative",

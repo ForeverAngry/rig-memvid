@@ -101,6 +101,13 @@ pub struct MemoryConfig {
     /// [`crate::MemvidStore::entity_preferences`], and the rest of the
     /// memory-card surface. Defaults to `true`.
     pub extract_triplets: bool,
+    /// Conversation ID stamped on `rig_tap` events emitted by this
+    /// hook (`memory.frame_written`). When `None`, the hook falls back to
+    /// [`Self::scope`] and finally to `"default"` so existing consumers
+    /// keep working, but explicitly setting this field is preferred: it
+    /// decouples telemetry correlation from memvid's URI-prefix scope.
+    /// No effect when the `observe` feature is off.
+    pub observe_conversation_id: Option<String>,
 }
 
 impl Default for MemoryConfig {
@@ -116,6 +123,7 @@ impl Default for MemoryConfig {
             auto_tag: true,
             extract_dates: true,
             extract_triplets: true,
+            observe_conversation_id: None,
         }
     }
 }
@@ -221,6 +229,21 @@ impl<M> MemvidPersistHook<M> {
                 return;
             }
         };
+        #[cfg(feature = "observe")]
+        rig_tap::emit_kind(
+            self.config
+                .observe_conversation_id
+                .as_deref()
+                .or(scope.as_deref())
+                .unwrap_or("default"),
+            rig_tap::EventKind::MemoryFrameWritten {
+                frame_kind: "turn".to_string(),
+                // memvid does not expose a cheap cumulative frame count
+                // from this hot path.
+                frame_count_after: None,
+                bytes_written: text.len(),
+            },
+        );
 
         if chat_role == "user"
             && self.config.supplemental_profile_cards
@@ -603,7 +626,7 @@ fn bind_token(token: &str, principal: &str) -> String {
 ///
 /// `Message::rag_text` is `pub(crate)` in rig-core, so we re-implement the
 /// equivalent walk here over the public content enums.
-fn render_message_text(msg: &Message) -> Option<String> {
+pub(crate) fn render_message_text(msg: &Message) -> Option<String> {
     use rig::completion::message::{
         AssistantContent, Message as Msg, ReasoningContent, UserContent,
     };

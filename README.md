@@ -5,7 +5,7 @@ Memvid-backed persistent memory and lexical store for Rig agents.
 [![crates.io](https://img.shields.io/crates/v/rig-memvid.svg)](https://crates.io/crates/rig-memvid)
 [![docs.rs](https://img.shields.io/docsrs/rig-memvid)](https://docs.rs/rig-memvid)
 [![license](https://img.shields.io/crates/l/rig-memvid.svg)](LICENSE)
-[![rig-core](https://img.shields.io/badge/rig--core-0.36.0-blue)](https://crates.io/crates/rig-core)
+[![rig-core](https://img.shields.io/badge/rig--core-0.37.0-blue)](https://crates.io/crates/rig-core)
 [![memvid-core](https://img.shields.io/badge/memvid--core-2.0.139-blue)](https://crates.io/crates/memvid-core)
 
 ## Overview
@@ -20,28 +20,32 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 ## Status
 
-- Crate version: `0.1.2`.
+- Crate version: `0.1.5`.
 - Rust edition: 2024.
 - MSRV: 1.89.
-- `rig-core` dependency: `0.36.0` with default features disabled.
+- `rig-core` dependency: `0.37.0` with default features disabled, renamed to `rig` so the historic `use rig::...` paths still work.
 - `memvid-core` dependency: `2.0.139` with default features disabled.
 - Runtime stance: runtime-agnostic library; `tokio` is only a dev-dependency for tests and examples.
 - Platform stance: not supported on `wasm` targets because `memvid-core` requires synchronous file I/O and OS-level file locking.
-- Current Unreleased work adds `InMemoryStore<E>` and Unicode-aware lexical normalization for that offline store.
+- Current Unreleased work restores memvid's default SIMD distance kernels through a new default `simd` feature, adds structured-memory card/context surfaces, principal-aware persistence, Logic Mesh pass-through, and local-model memory examples.
 
 The crate-local maturity plan lives in [ROADMAP.md](ROADMAP.md). Cross-crate
-coordination lives in the
-[rig-ecosystem docs](https://github.com/ForeverAngry/rig-ecosystem).
+coordination lives in
+[`rig-ecosystem/docs/roadmap.md`](../rig-ecosystem/docs/roadmap.md).
 
 ## Feature Flags
 
 | Feature | Default | Enables | Checked by `just check` |
 | --- | --- | --- | --- |
 | `lex` | yes | Memvid lexical search via `memvid-core/lex`. | default clippy and tests; also in `lex,vec` and `lex,api_embed` clippy combos |
+| `simd` | yes | Memvid SIMD distance kernels via `memvid-core/simd`, restoring the upstream default path dropped by `default-features = false`. | default clippy and tests; chained into `vec` and `api_embed` |
 | `vec` | no | Memvid local vector search via `memvid-core/vec`. | clippy with `--no-default-features --features "lex,vec"`; tests with the same combo |
 | `api_embed` | no | Remote embedding provider support via `memvid-core/api_embed`. | clippy with `--no-default-features --features "lex,api_embed"` |
 | `temporal` | no | Temporal track support via `memvid-core/temporal_track`. | not exercised by `just check` |
 | `encryption` | no | At-rest encryption via `memvid-core/encryption`. | not exercised by `just check` |
+| `compaction` | no | `MemvidDemotionHook` + `MemvidStoringCompactor` adapters onto `rig::memory::DemotionHook` / `rig::memory::Compactor`. Pulls `rig-memory = 0.1`. | clippy + tests with `--no-default-features --features "lex,compaction"` and via `--all-features` |
+| `context-projection` | no | Projects `MemvidStore` / `InMemoryStore` retrieval hits plus structured memory cards into `rig_compose::ContextItem`. Pulls `rig-compose = 0.3`. | clippy + tests with `--no-default-features --features "lex,context-projection"` and via `--all-features` |
+| `observe` | no | Emits `rig-tap` `ObservabilityEvent`s (`memory.frame_written`, `memory.demoted`, `context.compacted`) from `MemvidPersistHook`, `MemvidDemotionHook`, and `MemvidStoringCompactor`. Pulls `rig-tap = 0.1`. | covered by `--all-features` |
 
 ## Key Types
 
@@ -57,11 +61,11 @@ The crate re-exports `memvid_core` so callers can construct `PutOptions`, `AclCo
 
 ## Integration With Rig
 
-`rig-memvid` pins `rig-core = 0.36.0` in [Cargo.toml](Cargo.toml). `MemvidStore` plugs into Rig's vector-store flow, including `VectorStoreIndex` and `InsertDocuments`. `MemvidPersistHook<M>` plugs into Rig's prompt lifecycle via `PromptHook<M>` for any `CompletionModel`.
+`rig-memvid` pins `rig-core = 0.37.0` in [Cargo.toml](Cargo.toml). `MemvidStore` plugs into Rig's vector-store flow, including `VectorStoreIndex` and `InsertDocuments`. `MemvidPersistHook<M>` plugs into Rig's prompt lifecycle via `PromptHook<M>` for any `CompletionModel`.
 
 It is community-maintained and not part of the upstream `rig` repository.
 
-## Usage
+## Quick start
 
 Persistent store behavior is covered by [tests/smoke.rs](tests/smoke.rs) and [tests/integration.rs](tests/integration.rs). The examples [examples/chatbot_with_memory.rs](examples/chatbot_with_memory.rs), [examples/chatbot_with_memory_ollama.rs](examples/chatbot_with_memory_ollama.rs), [examples/inspect_memory.rs](examples/inspect_memory.rs), [examples/livetest_relationships.rs](examples/livetest_relationships.rs), and [examples/livetest_relationships_mlx.rs](examples/livetest_relationships_mlx.rs) show end-to-end archive usage.
 
@@ -93,6 +97,14 @@ let hits: Vec<(f64, String, serde_json::Value)> = store.top_n(request).await?;
 assert!(!hits.is_empty());
 # Ok(()) }
 ```
+
+The `.mv2` archive lives exactly where the builder path points. In local
+development that can be a relative path such as `./agent_memory.mv2`; in a
+container or Kubernetes workload it should be a mounted persistent volume path
+such as `/var/lib/agent/memory.mv2`. Object stores are useful for snapshots or
+backup/restore jobs, but they are not a live `MemvidStore` backend today
+because Memvid expects normal filesystem I/O and locking around the active
+archive.
 
 ### Structured memory (entities, slots, preferences)
 
@@ -170,14 +182,42 @@ example, `where` questions prefer `location` cards, food-safety
 questions prefer `allergy` cards, and preference questions prefer
 preference cards.
 
-For user-profile style archives, set `MemoryConfig::persist_assistant = false`
-to keep assistant paraphrases from creating duplicate or noisy cards.
-With `MemoryConfig::principal` set, `supplemental_profile_cards` also adds
-small deterministic cards for common user-profile and relationship facts
-that memvid's extractor can miss, such as `Alice is allergic to peanuts`
--> `profile alice/allergy = peanuts` and `Bob is Alice's manager at Acme.
-He reports to Carol, the VP.` -> `relationship alice/manager = Bob`,
-`relationship bob/reports_to = Carol`, and `profile carol/title = VP`.
+For user-profile style archives, set `MemoryConfig::principal` and
+`MemoryConfig::persist_assistant = false` to bind first-person user turns to a
+stable entity and keep assistant paraphrases from creating duplicate or noisy
+cards. The `chatbot_with_memory_ollama` example defaults to this profile-memory
+shape with `MEMVID_PRINCIPAL=User` and `MEMVID_PERSIST_ASSISTANT=false`;
+override either environment variable when you need a full transcript archive or
+a named principal such as `Alice`. With `MemoryConfig::principal` set,
+`supplemental_profile_cards` also adds small deterministic cards for common
+user-profile and relationship facts that memvid's extractor can miss, such as
+`Alice is allergic to peanuts` -> `profile alice/allergy = peanuts` and `Bob is
+Alice's manager at Acme. He reports to Carol, the VP.` -> `relationship
+alice/manager = Bob`, `relationship bob/reports_to = Carol`, and `profile
+carol/title = VP`.
+
+### Projecting memory into compose context
+
+With the optional `context-projection` feature enabled, `rig-memvid` can
+project both episodic retrieval hits and structured memory cards into
+`rig_compose::ContextItem`s for shared `ContextPack` budgeting. Card
+projection preserves compact card text, rank, confidence-or-fallback score,
+and provenance fields such as entity, slot, kind, polarity, source frame,
+source URI, engine, and schema version.
+
+```rust,no_run
+use rig_compose::{ContextPack, ContextPackConfig};
+use rig_memvid::projection::memory_cards_to_context_items;
+use rig_memvid::MemvidStore;
+
+# fn run(store: MemvidStore) -> Result<(), Box<dyn std::error::Error>> {
+let cards = store.entity_memories("alice")?;
+let items = memory_cards_to_context_items(&cards);
+let pack = ContextPack::pack(items, ContextPackConfig::new(2_000));
+let prompt_context = pack.render_text();
+# let _ = prompt_context;
+# Ok(()) }
+```
 
 For no-disk tests or offline modes, [src/inmem.rs](src/inmem.rs) includes unit tests for append, lookup, deterministic ranking, zero-score filtering, and Unicode normalization.
 
@@ -212,7 +252,7 @@ assert_eq!(hits.len(), 1);
 
 Canonical validation is `just check`.
 
-That recipe runs formatter checks, clippy for default features plus `--no-default-features --features "lex,vec"` and `--no-default-features --features "lex,api_embed"`, then tests for default features, no default features, and `--no-default-features --features "lex,vec"`.
+That recipe runs formatter checks, clippy for default features plus `--no-default-features --features "lex,vec"` and `--no-default-features --features "lex,api_embed"`, then tests for default features, no default features, and `--no-default-features --features "lex,vec"`. The default path includes the `simd` feature.
 
 Examples must also continue to build with `cargo build --examples`.
 
@@ -228,20 +268,24 @@ Examples must also continue to build with `cargo build --examples`.
 
 ## Ecosystem
 
-These companion crates are maintained as separate repositories. Together they form a small stack around the upstream Rig project: `rig-compose` provides the kernel surface, `rig-resources` contributes reusable skills and tools, `rig-mcp` moves tools across MCP, and `rig-memvid` connects Rig agents to persistent `.mv2` memory.
+These companion crates are maintained as separate repositories. Together they form a small stack around the upstream Rig project: `rig-compose` provides the kernel surface, `rig-resources` contributes reusable skills and tools, `rig-mcp` moves tools across MCP, `rig-memvid` connects Rig agents to persistent `.mv2` memory, `rig-model-meta` abstracts LLM metadata and probes, and `rig-tap` defines the backend-agnostic `ObservabilityEvent` schema that `rig-memvid` emits from under the `observe` feature.
 
 ```mermaid
 flowchart TD
     rig["rig / rig-core"]
-    compose["rig-compose 0.1.x"]
+    compose["rig-compose 0.3.x"]
     resources["rig-resources 0.1.x"]
     mcp["rig-mcp 0.1.x"]
     memvid["rig-memvid 0.1.x"]
+    model_meta["rig-model-meta 0.1.x"]
+    observe["rig-tap 0.1.x"]
 
     compose -. "Rig-shaped kernel; no direct rig-core dep" .-> rig
-    resources -- "rig-compose = 0.2; features: security, graph, full" --> compose
-    mcp -- "rig-compose = 0.2; rmcp stdio bridge" --> compose
-    memvid -- "rig-core = 0.36.0; features: lex, vec, api_embed, temporal, encryption" --> rig
+    resources -- "rig-compose = 0.3; features: security, graph, full" --> compose
+    mcp -- "rig-compose = 0.3; rmcp stdio bridge" --> compose
+    memvid -- "rig-core = 0.37.0; features: lex, simd, vec, api_embed, temporal, encryption, compaction, context-projection, observe" --> rig
+    memvid -. "optional rig-tap = 0.1 via observe feature" .-> observe
+    model_meta -. "optional rig-core = 0.37 via rig-hook" .-> rig
 ```
 
 Pinned Rig-facing dependencies from the current manifests:
@@ -249,9 +293,11 @@ Pinned Rig-facing dependencies from the current manifests:
 | Crate | Direct Rig-facing dependency | Notes |
 | --- | --- | --- |
 | `rig-compose` | none | Defines a Rig-shaped kernel surface without depending on `rig-core`. |
-| `rig-resources` | `rig-compose = 0.2` | Provides reusable skills, resource tools, and security helpers. |
-| `rig-mcp` | `rig-compose = 0.2` | Bridges `rig-compose` tools over MCP stdio and loopback transports. |
-| `rig-memvid` | `rig-core = 0.36.0` | Implements Rig vector-store and prompt-hook flows over Memvid. |
+| `rig-resources` | `rig-compose = 0.3` | Provides reusable skills, resource tools, and security helpers. |
+| `rig-mcp` | `rig-compose = 0.3` | Bridges `rig-compose` tools over MCP stdio and loopback transports. |
+| `rig-memvid` | `rig-core = 0.37.0`; optional `rig-compose = 0.3`; optional `rig-tap = 0.1` | Implements Rig vector-store, prompt-hook, compaction, context-projection, and (under `observe`) observability-event emission over Memvid. |
+| `rig-model-meta` | optional `rig-core = 0.37` via `rig-hook` | Provides standalone model traits plus optional Rig prompt-hook telemetry. |
+| `rig-tap` | `rig-core = 0.37` | Defines the `ObservabilityEvent` schema, `TelemetryHook`, and `ObservedMemory` decorator that `rig-memvid` emits under the `observe` feature. |
 
 The concrete multi-crate workflow tested today is the MCP loopback path: a `rig_compose::ToolRegistry` is exposed through `rig_mcp::LoopbackTransport`, remote schemas are wrapped as `rig_mcp::McpTool`, and the wrapped tools are registered back into another `ToolRegistry`. That proves a local `rig-compose` tool and an MCP-adapted tool are indistinguishable to callers. The backing test is `mcp_tool_indistinguishable_from_local` in [rig-mcp/src/transport.rs](https://github.com/ForeverAngry/rig-mcp/blob/main/src/transport.rs).
 

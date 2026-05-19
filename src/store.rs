@@ -342,10 +342,9 @@ impl MemvidStore {
     ///
     /// Useful for "who reports to alice's manager?"-style relationship
     /// queries. Returns the result list directly; callers that want
-    /// streaming traversal should drop down to
-    /// [`MemvidStore::lock`] (private) or call memvid's
-    /// `logic_mesh()` API by holding their own clone of the inner
-    /// [`memvid_core::Memvid`] handle.
+    /// streaming traversal should call memvid's `logic_mesh()` API by
+    /// holding their own clone of the inner [`memvid_core::Memvid`]
+    /// handle.
     pub fn follow_relationship(
         &self,
         start: &str,

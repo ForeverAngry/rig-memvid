@@ -8,7 +8,7 @@
 //!     the right cards through principal-bound selection.
 //!
 //! Run:
-//!   OLLAMA_MODEL=qwen2.5-coder:7b \
+//!   OLLAMA_MODEL=qwen3.5:9b \
 //!     cargo run --example livetest_relationships --features vec
 
 #[cfg(not(feature = "vec"))]
@@ -68,7 +68,7 @@ mod app {
         let base_url = std::env::var("OLLAMA_API_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:11434".to_string());
         let model_name =
-            std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen2.5-coder:7b".to_string());
+            std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen3.5:9b".to_string());
         println!("Ollama @ {base_url}, model = {model_name}");
 
         let client = ollama::Client::builder()
