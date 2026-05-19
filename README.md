@@ -182,14 +182,19 @@ example, `where` questions prefer `location` cards, food-safety
 questions prefer `allergy` cards, and preference questions prefer
 preference cards.
 
-For user-profile style archives, set `MemoryConfig::persist_assistant = false`
-to keep assistant paraphrases from creating duplicate or noisy cards.
-With `MemoryConfig::principal` set, `supplemental_profile_cards` also adds
-small deterministic cards for common user-profile and relationship facts
-that memvid's extractor can miss, such as `Alice is allergic to peanuts`
--> `profile alice/allergy = peanuts` and `Bob is Alice's manager at Acme.
-He reports to Carol, the VP.` -> `relationship alice/manager = Bob`,
-`relationship bob/reports_to = Carol`, and `profile carol/title = VP`.
+For user-profile style archives, set `MemoryConfig::principal` and
+`MemoryConfig::persist_assistant = false` to bind first-person user turns to a
+stable entity and keep assistant paraphrases from creating duplicate or noisy
+cards. The `chatbot_with_memory_ollama` example defaults to this profile-memory
+shape with `MEMVID_PRINCIPAL=User` and `MEMVID_PERSIST_ASSISTANT=false`;
+override either environment variable when you need a full transcript archive or
+a named principal such as `Alice`. With `MemoryConfig::principal` set,
+`supplemental_profile_cards` also adds small deterministic cards for common
+user-profile and relationship facts that memvid's extractor can miss, such as
+`Alice is allergic to peanuts` -> `profile alice/allergy = peanuts` and `Bob is
+Alice's manager at Acme. He reports to Carol, the VP.` -> `relationship
+alice/manager = Bob`, `relationship bob/reports_to = Carol`, and `profile
+carol/title = VP`.
 
 ### Projecting memory into compose context
 
