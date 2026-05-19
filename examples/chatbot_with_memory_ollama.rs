@@ -4,22 +4,23 @@
 //! Prereqs:
 //!   1. Install Ollama (https://ollama.com) and start the daemon
 //!      (`ollama serve` — usually auto-started on macOS).
-//!   2. Pull a model, e.g. `ollama pull qwen2.5-coder:3b-instruct`.
+//!   2. Pull a model, e.g. `ollama pull qwen3.5:9b`.
 //!
 //! Run with:
 //!
 //! ```bash
 //! # Optional overrides:
-//! #   OLLAMA_MODEL=llama3.2 OLLAMA_API_BASE_URL=http://localhost:11434 \
+//! #   OLLAMA_MODEL=qwen3.5:9b OLLAMA_API_BASE_URL=http://localhost:11434 \
 //! cargo run --example chatbot_with_memory_ollama
 //! ```
 //!
 //! The example creates (or reopens) `./chatbot_memory_ollama.mv2`, attaches it
 //! as both a recall store (via `dynamic_context`) and a write target (via
 //! `MemvidPersistHook`), then drops you into an interactive REPL. Anything
-//! you type is sent to the agent; replies are appended to memory and surface
+//! you type is sent to the agent; user turns are appended to memory and surface
 //! on later turns via `dynamic_context`. Re-running the binary retains
-//! whatever previous runs wrote.
+//! whatever previous runs wrote. By default, first-person user turns are bound
+//! to the stable principal `User`; override with `MEMVID_PRINCIPAL=Alice`.
 //!
 //! REPL commands: `/recall <query>` to peek at the lexical retrieval hits
 //! for a query without prompting the model, `/quit` (or Ctrl-D) to exit.
@@ -158,8 +159,7 @@ async fn main() -> Result<()> {
 
     let base_url = std::env::var("OLLAMA_API_BASE_URL")
         .unwrap_or_else(|_| "http://localhost:11434".to_string());
-    let requested =
-        std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen2.5-coder:3b-instruct".to_string());
+    let requested = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen3.5:9b".to_string());
     let model_name = resolve_model(&base_url, &requested).await;
 
     println!("Using Ollama at {base_url} with model `{model_name}`");
@@ -171,13 +171,12 @@ async fn main() -> Result<()> {
     let model = client.completion_model(&model_name);
     let principal = std::env::var("MEMVID_PRINCIPAL")
         .ok()
-        .filter(|value| !value.trim().is_empty());
-    if let Some(name) = principal.as_deref() {
-        println!("Binding user turns to principal `{name}` for structured memory extraction");
-    }
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "User".to_string());
+    println!("Binding user turns to principal `{principal}` for structured memory extraction");
     let persist_assistant = std::env::var("MEMVID_PERSIST_ASSISTANT")
         .map(|value| !matches!(value.as_str(), "0" | "false" | "FALSE" | "False"))
-        .unwrap_or(true);
+        .unwrap_or(false);
 
     let hook = MemvidPersistHook::new(
         store.clone(),
@@ -186,15 +185,13 @@ async fn main() -> Result<()> {
             commit_each_turn: true,
             default_tags: vec!["chatbot".into(), "ollama".into()],
             scope: Some("chatbot_memory_ollama".into()),
-            principal: principal.clone(),
+            principal: Some(principal.clone()),
             persist_assistant,
             ..MemoryConfig::default()
         },
     );
 
-    let card_selection = principal
-        .map(rig_memvid::CardSelection::ForPrincipal)
-        .unwrap_or(rig_memvid::CardSelection::EntityMentions);
+    let card_selection = rig_memvid::CardSelection::ForPrincipal(principal.clone());
     let cards_ctx = rig_memvid::MemoryCardContext::new(store.clone(), card_selection);
 
     let agent = rig::agent::AgentBuilder::new(model)
@@ -209,20 +206,21 @@ async fn main() -> Result<()> {
 
     println!(
         "\nInteractive chat. Type a message and press Enter.\n\
-         Commands:\n  \
-           /recall <query>         preview retrieval hits\n  \
-           /stats                  frame + memory-card counts\n  \
-           /entity <name>          list memory cards for an entity\n  \
-           /prefs <name>           list preference cards for an entity\n  \
-           /slot <entity> <slot>   show the current value for a slot\n  \
-           /quit (Ctrl-D)          exit\n\
-         Note: memvid's lex index is BM25 keyword-AND with stopword\n\
-         filtering. Phrase recall queries with content keywords\n\
-         (e.g. `pizza`, not `what food do you like?`).\n\
-         Optional: set MEMVID_PRINCIPAL=Alice to bind first-person turns\n\
-         to a stable structured-memory entity.\n\
-            Optional: set MEMVID_PERSIST_ASSISTANT=false to store only user turns.\n\
-         Memory file: {}",
+                 Commands:\n  \
+                     /recall <query>         preview retrieval hits\n  \
+                     /stats                  frame + memory-card counts\n  \
+                     /entity <name>          list memory cards for an entity\n  \
+                     /prefs <name>           list preference cards for an entity\n  \
+                     /slot <entity> <slot>   show the current value for a slot\n  \
+                     /quit (Ctrl-D)          exit\n\
+                 Note: memvid's lex index is BM25 keyword-AND with stopword\n\
+                 filtering. Phrase recall queries with content keywords\n\
+                 (e.g. `pizza`, not `what food do you like?`).\n\
+                 Defaults: MEMVID_PRINCIPAL=User and MEMVID_PERSIST_ASSISTANT=false,\n\
+                 so first-person turns become stable user-profile memory without\n\
+                 assistant paraphrases polluting recall. Override either env var\n\
+                 when you need a different archive policy.\n\
+                 Memory file: {}",
         path.display()
     );
 

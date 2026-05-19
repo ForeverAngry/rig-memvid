@@ -25,6 +25,13 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ### Changed
 
+- The `chatbot_with_memory_ollama` example now defaults to profile-memory
+  behaviour: `MEMVID_PRINCIPAL=User` and
+  `MEMVID_PERSIST_ASSISTANT=false`. This makes first-person facts such as
+  `I like cheese pizza` bind to stable structured memory by default and
+  avoids assistant paraphrases polluting recall. Override either env var
+  to recover the old no-principal / full-transcript shape.
+
 - **`rig-core` dependency bumped from `0.36.0` to `0.37.0`.** Picks up
   PR [#1748](https://github.com/0xPlaygrounds/rig/pull/1748) which
   introduces the `Compactor` and `DemotionHook` memory traits this
