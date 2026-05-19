@@ -34,7 +34,6 @@
 //! # Implementing for a new backend
 //!
 //! ```rust,no_run
-//! use std::collections::HashMap;
 //! use memvid_core::MemoryCard;
 //! use rig::vector_store::VectorStoreError;
 //! use rig_memvid::MemoryGraph;

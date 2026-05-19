@@ -30,8 +30,8 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 - Current Unreleased work adds `InMemoryStore<E>` and Unicode-aware lexical normalization for that offline store.
 
 The crate-local maturity plan lives in [ROADMAP.md](ROADMAP.md). Cross-crate
-coordination lives in
-[`rig-contributions/docs/roadmap.md`](../rig-contributions/docs/roadmap.md).
+coordination lives in the
+[rig-ecosystem docs](https://github.com/ForeverAngry/rig-ecosystem).
 
 ## Feature Flags
 

@@ -55,7 +55,9 @@ mod app {
             )
             .try_init();
 
-        let path = PathBuf::from("livetest.mv2");
+        let path = PathBuf::from(
+            std::env::var("MEMVID_PATH").unwrap_or_else(|_| "livetest.mv2".to_string()),
+        );
         let store = MemvidStore::builder()
             .path(&path)
             .enable_lex()

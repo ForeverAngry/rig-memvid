@@ -1,6 +1,6 @@
 # rig-memvid Roadmap
 
-This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate coordination summary lives in [`rig-contributions/docs/roadmap.md`](../rig-contributions/docs/roadmap.md).
+This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate coordination summary lives in the [rig-ecosystem docs](https://github.com/ForeverAngry/rig-ecosystem).
 
 ## Role
 
