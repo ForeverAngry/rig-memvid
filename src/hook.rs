@@ -183,6 +183,19 @@ pub struct MemoryConfig {
     /// hard requirement, or supply a [`WriteFailure::Custom`] callback to
     /// route the failure into your own metrics / alerting.
     pub on_write_failure: WriteFailure,
+    /// Whether to rewrite first-person pronouns in user turns into the
+    /// configured [`Self::principal`] (English-only heuristic). Defaults
+    /// to `true`, but the rewrite is also a no-op when `principal` is
+    /// `None`. Set to `false` to disable the heuristic entirely (e.g.
+    /// for non-English transcripts or when callers already canonicalise
+    /// text upstream).
+    ///
+    /// The rewrite also short-circuits on a per-text basis when the
+    /// turn contains a triple-backtick code fence or a balanced
+    /// double-quoted span containing the standalone token `I`; both are
+    /// strong signals that the literal `I` is quoted speech or code and
+    /// must not be rewritten.
+    pub rewrite_principal_pronouns: bool,
 }
 
 impl Default for MemoryConfig {
@@ -200,6 +213,7 @@ impl Default for MemoryConfig {
             extract_triplets: true,
             observe_conversation_id: None,
             on_write_failure: WriteFailure::default(),
+            rewrite_principal_pronouns: true,
         }
     }
 }
@@ -292,6 +306,11 @@ impl MemoryConfigBuilder {
     /// Policy for frame-write failures.
     pub fn on_write_failure(mut self, policy: WriteFailure) -> Self {
         self.config.on_write_failure = policy;
+        self
+    }
+    /// Enable or disable the English-only principal-pronoun rewrite.
+    pub fn rewrite_principal_pronouns(mut self, on: bool) -> Self {
+        self.config.rewrite_principal_pronouns = on;
         self
     }
     /// Finalise the builder and return a [`MemoryConfig`].
@@ -387,7 +406,7 @@ impl<M> MemvidPersistHook<M> {
         if text.is_empty() {
             return;
         }
-        let text = if chat_role == "user" {
+        let text = if chat_role == "user" && self.config.rewrite_principal_pronouns {
             self.config
                 .principal
                 .as_deref()
@@ -743,9 +762,45 @@ fn allergy_value(text: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+/// Returns `true` if `text` contains a balanced ASCII double-quoted span
+/// (`"..."`) whose contents include the standalone token `I`. Used by
+/// [`bind_principal`] to refuse rewriting quoted speech.
+fn quoted_span_contains_first_person(text: &str) -> bool {
+    let mut in_quote = false;
+    let mut span_start: usize = 0;
+    for (idx, ch) in text.char_indices() {
+        if ch != '"' {
+            continue;
+        }
+        if !in_quote {
+            in_quote = true;
+            span_start = idx + ch.len_utf8();
+        } else {
+            in_quote = false;
+            if let Some(span) = text.get(span_start..idx) {
+                for tok in span.split_whitespace() {
+                    let core = tok.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'');
+                    if core == "I" {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn bind_principal(text: &str, principal: &str) -> String {
     let principal = principal.trim();
     if principal.is_empty() {
+        return text.to_string();
+    }
+
+    // Safety short-circuits: if the turn contains a triple-backtick code
+    // fence, or a balanced double-quoted span containing the standalone
+    // token `I`, refuse to rewrite. Quoted speech / code routinely
+    // contains literal `I` that does not refer to the speaker.
+    if text.contains("```") || quoted_span_contains_first_person(text) {
         return text.to_string();
     }
 
@@ -792,7 +847,12 @@ fn bind_principal(text: &str, principal: &str) -> String {
                 continue;
             }
         }
-        output.push(bind_token(token, principal));
+        // Bare standalone `I` with no recognised verb follower: leave it
+        // alone. This avoids misrewriting Roman numerals (`World War I`),
+        // section headers, or any other context where `I` is not a
+        // first-person pronoun. Recognised pronoun forms (`my`, `me`,
+        // `I'm`, etc.) are handled by the `core != "i"` branch above.
+        output.push(token.to_string());
     }
     output.join(" ")
 }
@@ -988,6 +1048,36 @@ mod tests {
     }
 
     #[test]
+    fn bind_principal_is_idempotent() {
+        let once = bind_principal("I like espresso and I dislike tea.", "Alice");
+        let twice = bind_principal(&once, "Alice");
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn bind_principal_skips_quoted_speech() {
+        // Quoted `I` belongs to the speaker being quoted, not the principal.
+        let input = "Bob said \"I love hiking\" yesterday.";
+        assert_eq!(bind_principal(input, "Alice"), input);
+    }
+
+    #[test]
+    fn bind_principal_skips_code_fences() {
+        // Code fences may contain literal `I` identifiers that must not be
+        // rewritten.
+        let input = "Try this:\n```\nlet I = 1;\n```\nthen rerun.";
+        assert_eq!(bind_principal(input, "Alice"), input);
+    }
+
+    #[test]
+    fn bind_principal_leaves_roman_numeral_alone() {
+        // `I` here is a Roman numeral, not a pronoun; no verb in
+        // `principal_verb` follows, so the rewrite must be a no-op.
+        let input = "World War I ended in 1918.";
+        assert_eq!(bind_principal(input, "Alice"), input);
+    }
+
+    #[test]
     fn allergy_value_extracts_common_forms() {
         assert_eq!(
             allergy_value("Alice is allergic to peanuts."),
@@ -1079,6 +1169,11 @@ mod tests {
             from_builder.on_write_failure,
             super::WriteFailure::Warn
         ));
+        assert_eq!(
+            from_builder.rewrite_principal_pronouns,
+            from_default.rewrite_principal_pronouns
+        );
+        assert!(from_default.rewrite_principal_pronouns);
     }
 
     #[test]
@@ -1095,6 +1190,7 @@ mod tests {
             .extract_triplets(false)
             .observe_conversation_id(Some("conv-1".into()))
             .on_write_failure(super::WriteFailure::Halt)
+            .rewrite_principal_pronouns(false)
             .build();
         assert!(!cfg.commit_each_turn);
         assert_eq!(cfg.default_tags, vec!["t1".to_string()]);
@@ -1107,5 +1203,6 @@ mod tests {
         assert!(!cfg.extract_triplets);
         assert_eq!(cfg.observe_conversation_id.as_deref(), Some("conv-1"));
         assert!(matches!(cfg.on_write_failure, super::WriteFailure::Halt));
+        assert!(!cfg.rewrite_principal_pronouns);
     }
 }
