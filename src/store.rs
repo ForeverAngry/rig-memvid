@@ -215,6 +215,28 @@ impl MemvidStore {
         Ok(guard.memories().cards().to_vec())
     }
 
+    /// Cards whose `entity` mentions appear (case-insensitive,
+    /// whole-word) in `query`. Filters behind the inner mutex so only
+    /// matching cards are cloned out, avoiding the full-archive
+    /// snapshot that [`MemvidStore::all_memory_cards`] performs.
+    pub fn cards_for_query(
+        &self,
+        query: &str,
+    ) -> Result<Vec<memvid_core::MemoryCard>, MemvidError> {
+        let needle = query.to_lowercase();
+        let guard = self.lock()?;
+        Ok(guard
+            .memories()
+            .cards()
+            .iter()
+            .filter(|card| {
+                let entity = card.entity.to_lowercase();
+                !entity.is_empty() && crate::cards_context::contains_word(&needle, &entity)
+            })
+            .cloned()
+            .collect())
+    }
+
     /// Insert a fully-built [`memvid_core::MemoryCard`] onto the memories
     /// track. The card's `id` field is overwritten with a freshly assigned
     /// [`memvid_core::MemoryCardId`], which is returned.
@@ -646,6 +668,24 @@ impl MemvidFilter {
             request.no_sketch = b;
         }
     }
+
+    /// Returns `true` when this filter has no recorded validity
+    /// problems. Filters with `is_valid() == false` are rejected by
+    /// the search path with [`MemvidError::UnsupportedFilter`].
+    ///
+    /// Callers that build a [`MemvidFilter`] programmatically (for
+    /// example through Rig's `SearchFilter` combinators) can use this
+    /// pair with [`MemvidFilter::errors`] to surface the failure
+    /// before issuing the query.
+    pub fn is_valid(&self) -> bool {
+        self.invalid.is_empty()
+    }
+
+    /// Human-readable reasons why this filter cannot be applied, or
+    /// an empty slice when [`MemvidFilter::is_valid`] returns `true`.
+    pub fn errors(&self) -> &[String] {
+        &self.invalid
+    }
 }
 
 fn json_as_string(value: &serde_json::Value) -> Option<String> {
@@ -740,6 +780,14 @@ impl SearchFilter for MemvidFilter {
         // disjunction would require widening the search request. Discard
         // both operands and return a bare unsupported marker — the
         // resulting filter is rejected by `into_validated()` regardless.
+        // Warn so callers using `SearchFilter::or` through Rig's generic
+        // combinator surface notice the silent rejection at runtime
+        // rather than only seeing the eventual `UnsupportedFilter` error.
+        tracing::warn!(
+            target: "rig_memvid::filter",
+            "SearchFilter::or is not supported by MemvidFilter; the resulting filter will be \
+             rejected by the search path with MemvidError::UnsupportedFilter"
+        );
         let _ = self;
         Self::unsupported("memvid does not support or() in filters")
     }

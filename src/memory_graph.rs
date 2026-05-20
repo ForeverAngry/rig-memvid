@@ -84,6 +84,25 @@ pub trait MemoryGraph {
 
     /// Event-kind cards for `entity` in chronological order.
     fn memory_timeline(&self, entity: &str) -> Result<Vec<MemoryCard>, Self::Error>;
+
+    /// Cards whose `entity` mentions appear in `query` (case-insensitive
+    /// whole-word match). The default implementation snapshots the entire
+    /// archive via [`MemoryGraph::all_memory_cards`] and filters in pure
+    /// Rust, which is correct but clones every card; backends backed by a
+    /// graph store should override this to filter behind their own
+    /// locking / indexing and avoid the intermediate full-archive
+    /// allocation.
+    fn cards_for_query(&self, query: &str) -> Result<Vec<MemoryCard>, Self::Error> {
+        let needle = query.to_lowercase();
+        let all = self.all_memory_cards()?;
+        Ok(all
+            .into_iter()
+            .filter(|card| {
+                let entity = card.entity.to_lowercase();
+                !entity.is_empty() && crate::cards_context::contains_word(&needle, &entity)
+            })
+            .collect())
+    }
 }
 
 impl MemoryGraph for crate::MemvidStore {
@@ -111,5 +130,9 @@ impl MemoryGraph for crate::MemvidStore {
 
     fn memory_timeline(&self, entity: &str) -> Result<Vec<MemoryCard>, Self::Error> {
         Self::memory_timeline(self, entity)
+    }
+
+    fn cards_for_query(&self, query: &str) -> Result<Vec<MemoryCard>, Self::Error> {
+        Self::cards_for_query(self, query)
     }
 }

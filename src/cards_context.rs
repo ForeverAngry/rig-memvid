@@ -132,42 +132,26 @@ where
     }
 
     fn select_entity_mentions(&self, query: &str) -> Result<Vec<MemoryCard>, G::Error> {
-        if self.graph.memory_card_count()? == 0 {
-            return Ok(Vec::new());
-        }
-        let needle = query.to_lowercase();
-
-        // Snapshot every card once, then filter in pure Rust. Cards are
-        // already in memory inside the backend; this avoids any
-        // re-entrant per-entity reader calls.
-        let all = self.graph.all_memory_cards()?;
-        let mut hits: Vec<MemoryCard> = all
-            .into_iter()
-            .filter(|card| {
-                let entity = card.entity.to_lowercase();
-                if entity.is_empty() {
-                    return false;
-                }
-                contains_word(&needle, &entity)
-            })
-            .collect();
+        // Delegate the entity-mention filter to the backend so graph
+        // implementations can apply it behind their own locking and
+        // avoid the full-archive clone that the default trait impl
+        // performs.
+        let mut hits = self.graph.cards_for_query(query)?;
         hits.sort_by_key(|c| std::cmp::Reverse(c.created_at));
         Ok(hits)
     }
 
     fn select_recent(&self) -> Result<Vec<MemoryCard>, G::Error> {
-        if self.graph.memory_card_count()? == 0 {
-            return Ok(Vec::new());
-        }
+        // The previous `memory_card_count == 0` short-circuit was
+        // redundant: an empty `Vec` is already correct, and skipping
+        // it costs one lock acquisition we already pay inside the
+        // backend call.
         let mut all = self.graph.all_memory_cards()?;
         all.sort_by_key(|c| std::cmp::Reverse(c.created_at));
         Ok(all)
     }
 
     fn select_for_principal(&self, principal: &str) -> Result<Vec<MemoryCard>, G::Error> {
-        if self.graph.memory_card_count()? == 0 {
-            return Ok(Vec::new());
-        }
         let mut hits = self.graph.entity_memories(principal)?;
         let lower = principal.to_lowercase();
         if hits.is_empty() && lower != principal {
@@ -211,9 +195,6 @@ where
     }
 
     fn select_preferences(&self, entities: &[String]) -> Result<Vec<MemoryCard>, G::Error> {
-        if self.graph.memory_card_count()? == 0 {
-            return Ok(Vec::new());
-        }
         let mut hits = Vec::new();
         for ent in entities {
             hits.extend(self.graph.entity_preferences(ent)?);
@@ -233,7 +214,7 @@ fn same_card(left: &MemoryCard, right: &MemoryCard) -> bool {
 ///
 /// Avoids matching `"art"` inside `"smart"` while staying dependency-free.
 /// Both inputs must already be lowercased by the caller.
-fn contains_word(haystack: &str, needle: &str) -> bool {
+pub(crate) fn contains_word(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() || haystack.len() < needle.len() {
         return false;
     }
