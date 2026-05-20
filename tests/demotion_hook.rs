@@ -84,10 +84,9 @@ async fn demotion_hook_persists_messages_into_archive() -> Result<()> {
 async fn demotion_hook_disabled_policy_is_noop() -> Result<()> {
     let dir = tempdir()?;
     let store = lex_store(&dir.path().join("disabled.mv2"))?;
-    let config = MemoryConfig {
-        policy: rig_memvid::WritePolicy::Disabled,
-        ..MemoryConfig::default()
-    };
+    let config = MemoryConfig::builder()
+        .policy(rig_memvid::WritePolicy::Disabled)
+        .build();
     let hook = MemvidDemotionHook::new(store.clone(), config);
 
     hook.on_demote("conv-1", vec![user("nothing should be persisted")])
@@ -130,10 +129,9 @@ async fn demotion_hook_empty_batch_succeeds_without_writes() -> Result<()> {
 async fn demotion_hook_honours_scope_filter() -> Result<()> {
     let dir = tempdir()?;
     let store = lex_store(&dir.path().join("scoped.mv2"))?;
-    let config = MemoryConfig {
-        scope: Some("conv://abc".to_string()),
-        ..MemoryConfig::default()
-    };
+    let config = MemoryConfig::builder()
+        .scope(Some("conv://abc".to_string()))
+        .build();
     let hook = MemvidDemotionHook::new(store.clone(), config);
 
     hook.on_demote(

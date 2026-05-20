@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
         .build()?;
     let model = client.completion_model(&model_name);
     let principal: Option<String> = match std::env::var("MEMVID_PRINCIPAL").ok().as_deref() {
-        None => Some("User".to_string()),        // unset → default "User"
+        None => Some("User".to_string()),       // unset → default "User"
         Some(s) if s.trim().is_empty() => None, // empty string → opt-out
         Some(s) => Some(s.to_string()),
     };
@@ -186,15 +186,14 @@ async fn main() -> Result<()> {
 
     let hook = MemvidPersistHook::new(
         store.clone(),
-        MemoryConfig {
-            policy: WritePolicy::Raw,
-            commit_each_turn: true,
-            default_tags: vec!["chatbot".into(), "ollama".into()],
-            scope: Some("chatbot_memory_ollama".into()),
-            principal: principal.clone(),
-            persist_assistant,
-            ..MemoryConfig::default()
-        },
+        MemoryConfig::builder()
+            .policy(WritePolicy::Raw)
+            .commit_each_turn(true)
+            .default_tags(vec!["chatbot".into(), "ollama".into()])
+            .scope(Some("chatbot_memory_ollama".into()))
+            .principal(principal.clone())
+            .persist_assistant(persist_assistant)
+            .build(),
     );
 
     let card_selection = match &principal {

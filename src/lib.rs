@@ -71,7 +71,10 @@ pub use demotion::MemvidDemotionHook;
 #[cfg(not(target_family = "wasm"))]
 pub use error::MemvidError;
 #[cfg(not(target_family = "wasm"))]
-pub use hook::{MemoryConfig, MemvidPersistHook, WritePolicy, WriteTransform};
+pub use hook::{
+    MemoryConfig, MemoryConfigBuilder, MemvidPersistHook, WriteFailure, WriteFailureAction,
+    WriteFailurePhase, WritePolicy, WriteTransform,
+};
 #[cfg(not(target_family = "wasm"))]
 pub use inmem::{Episode, InMemoryError, InMemoryHit, InMemoryStore};
 #[cfg(not(target_family = "wasm"))]

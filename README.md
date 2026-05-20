@@ -20,7 +20,7 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 ## Status
 
-- Crate version: `0.1.5`.
+- Crate version: `0.2.0`.
 - Rust edition: 2024.
 - MSRV: 1.89.
 - `rig-core` dependency: `0.37.0` with default features disabled, renamed to `rig` so the historic `use rig::...` paths still work.
@@ -165,7 +165,7 @@ Selection strategies (`CardSelection`):
   Useful as a "what does the agent know about the user right now"
   preamble.
 - `ForPrincipal(entity)` — cards for one stable entity regardless of
-  query text. Pair with `MemoryConfig { principal: Some(entity), .. }`
+  query text. Pair with `MemoryConfig::builder().principal(Some(entity))…build()`
   so first-person user turns such as `I like espresso` are persisted as
   that entity's structured memories. Principal selection also expands
   one hop through relationship-card values, so `alice/manager = Bob`
