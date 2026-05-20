@@ -123,6 +123,17 @@ where
     /// configured [`CardSelection`]. Public so tests and tools can
     /// inspect what the agent would see.
     pub fn select(&self, query: &str) -> Result<Vec<MemoryCard>, G::Error> {
+        // Selection strategies issue independent backend reads
+        // (`memory_card_count`, `all_memory_cards`, `entity_memories`,
+        // …) without holding a transactional snapshot across them. That
+        // means a concurrent writer can interleave between calls, so a
+        // strategy that compares an entity-specific result with a
+        // global all-cards count may observe an old count and a new
+        // card. We accept that race intentionally: card selection is a
+        // best-effort context-projection helper, not a consistency
+        // boundary, and the cards layer is monotonic in practice (the
+        // worst case is missing a card that lands mid-selection — it
+        // will surface on the next turn).
         match &self.strategy {
             CardSelection::EntityMentions => self.select_entity_mentions(query),
             CardSelection::RecentCards => self.select_recent(),

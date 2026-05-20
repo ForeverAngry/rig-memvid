@@ -395,6 +395,11 @@ pub struct MemvidStoreBuilder {
 }
 
 impl std::fmt::Debug for MemvidStoreBuilder {
+    // L6: hand-rolled to avoid leaking the boxed `embedder` closure
+    // through `#[derive(Debug)]` (which would require Debug on every
+    // captured value behind the `dyn Embedder` trait object). The
+    // placeholder `<embedder>` keeps the output stable and redacts a
+    // surface that may hold API keys or model handles by value.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("MemvidStoreBuilder");
         d.field("path", &self.path)

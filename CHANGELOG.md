@@ -39,6 +39,24 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ### Changed
 
+- **`clean_clause` strips common corporate-entity suffixes.** Card
+  values now drop trailing `Inc`, `Corp`, `LLC`, `Ltd`, `Co`,
+  `Company`, `Corporation`, `Incorporated`, and `Limited` so an
+  extractor seeing `Acme Corp.` materialises a card value of `Acme`.
+  `engine_version` for principal-rules cards bumps from `"1"` to
+  `"2"` so consumers can detect the normalised values. Existing
+  cards on disk are unchanged.
+- **`MemoryGraph::cards_for_query`.** New trait method with a
+  default implementation; backends with index support can override
+  to filter inside their own locking. `MemvidStore` overrides to
+  filter behind the inner mutex and clone only matching cards,
+  removing the per-query full-archive snapshot that
+  `select_entity_mentions` previously paid.
+- **`MemvidFilter::is_valid` / `MemvidFilter::errors`.** Inspect
+  validity programmatically before issuing a search; pairs with the
+  existing `MemvidError::UnsupportedFilter` return path.
+  `SearchFilter::or` now also logs a `tracing::warn!` so silent
+  rejections are observable.
 - **Optional `observe` feature.** Pulls `rig-tap` as a runtime
   dependency and emits structured observability events from three tap
   points: `memory.frame_written` whenever the persist hook,

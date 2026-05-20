@@ -560,7 +560,7 @@ fn profile_card(
         .slot(slot)
         .value(value.trim())
         .source(frame_id, source_uri)
-        .engine("rig-memvid:principal-rules", "1")
+        .engine("rig-memvid:principal-rules", "2")
         .confidence(1.0)
         .build(0)
         .ok()
@@ -579,7 +579,7 @@ fn relationship_card(
         .slot(slot)
         .value(value.trim())
         .source(frame_id, source_uri)
-        .engine("rig-memvid:principal-rules", "1")
+        .engine("rig-memvid:principal-rules", "2")
         .confidence(1.0)
         .build(0)
         .ok()
@@ -598,7 +598,7 @@ fn fact_card(
         .slot(slot)
         .value(value.trim())
         .source(frame_id, source_uri)
-        .engine("rig-memvid:principal-rules", "1")
+        .engine("rig-memvid:principal-rules", "2")
         .confidence(1.0)
         .build(0)
         .ok()
@@ -733,7 +733,30 @@ fn clean_clause(text: &str, delimiters: &[char]) -> Option<String> {
         .trim()
         .trim_matches(|c: char| !c.is_alphanumeric() && c != ' ' && c != '_' && c != '-')
         .trim();
-    (!value.is_empty()).then(|| value.to_string())
+    // L2: strip common corporate-entity suffixes so an extractor seeing
+    // `Acme Corp.` or `Initech, LLC` materialises a card whose value is
+    // just `Acme` / `Initech`, matching what downstream relationship
+    // queries (and humans) actually look for. Order matters: longest
+    // suffix first so `Corporation` strips before `Corp`.
+    const CORP_SUFFIXES: &[&str] = &[
+        " incorporated",
+        " corporation",
+        " company",
+        " limited",
+        " inc",
+        " corp",
+        " llc",
+        " ltd",
+        " co",
+    ];
+    let lowered = value.to_lowercase();
+    let stripped = CORP_SUFFIXES
+        .iter()
+        .find_map(|suffix| lowered.strip_suffix(suffix).map(|head| head.len()))
+        .and_then(|head_len| value.get(..head_len))
+        .map(str::trim)
+        .unwrap_or(value);
+    (!stripped.is_empty()).then(|| stripped.to_string())
 }
 
 fn normalize_entity(entity: &str) -> String {
