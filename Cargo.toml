@@ -1,6 +1,6 @@
 [package]
 name = "rig-memvid"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT"
@@ -34,11 +34,17 @@ blake3 = { version = "1", optional = true, default-features = false }
 # rig-compose `ContextItem` projection. Pulled only when the
 # `context-projection` feature is enabled so the default build stays
 # free of the rig-compose dep.
-rig-compose = { version = "0.3", path = "../rig-compose", optional = true, default-features = false }
+#
+# NOTE: no `path = "..."` here on purpose. Sibling-folder development
+# overrides live in a top-level workspace `[patch.crates-io]`, not in
+# this published crate's `[dependencies]` — otherwise consumers outside
+# the umbrella workspace cannot build `--features context-projection`.
+rig-compose = { version = "0.3", optional = true, default-features = false }
 # Structured observability event emission for the persist hook,
 # compactor, and demotion paths. Pulled only when the `observe`
-# feature is enabled.
-rig-tap = { version = "0.1", path = "../rig-tap", optional = true }
+# feature is enabled. Same `[patch.crates-io]` note as `rig-compose`
+# above applies.
+rig-tap = { version = "0.1", optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.102"
@@ -94,3 +100,11 @@ unwrap_used = "deny"
 [profile.release]
 lto = true
 opt-level = "s"
+
+# Local development overrides for sibling crates that may not yet be
+# published or whose latest unreleased work lives in adjacent folders.
+# `cargo publish` strips `[patch.*]` tables, so this is build-only and
+# does not affect what downstream consumers see on crates.io.
+[patch.crates-io]
+rig-compose = { path = "../rig-compose" }
+rig-tap = { path = "../rig-tap" }

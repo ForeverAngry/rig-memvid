@@ -6,8 +6,59 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-19
+
+### Breaking
+
+- **`MemoryConfig` is now `#[non_exhaustive]`.** Construct it through
+  the new fluent [`MemoryConfig::builder()`] or by starting from
+  `MemoryConfig::default()` and mutating fields. Struct-literal
+  construction (`MemoryConfig { … }`) outside this crate is no longer
+  allowed — that is the SemVer-major break and why this is `0.2.0`
+  rather than `0.1.6`. New fields will land additively from here.
+- **`MemvidFrameMetadata` is now `#[non_exhaustive]`.** Decoded the
+  same way (`serde_json::from_value`); direct struct-literal
+  construction outside this crate is no longer allowed — downstream
+  callers must deserialise (or avoid constructing it directly). This
+  is forward-compatible: new fields can ship without another major
+  bump.
+
 ### Added
 
+- **`WriteFailure` policy on `MemoryConfig`.** New
+  `MemoryConfig::on_write_failure` field controls what
+  `MemvidPersistHook` does when a frame fails to write. Defaults to
+  `WriteFailure::Warn` (log + continue — matches pre-0.2 behaviour).
+  `WriteFailure::Halt` logs at `ERROR` and returns
+  `HookAction::terminate` on the next hook return point so the agent
+  loop stops. `WriteFailure::Custom(Arc<dyn Fn(...) -> ...>)` accepts
+  a caller-provided callback for metrics or alerting and returns a
+  `WriteFailureAction` to keep or halt the turn. The matching
+  `WriteFailurePhase` enum distinguishes `Put`, `PutCard`, and
+  `Commit` failures.
+- **`MemoryConfigBuilder`.** Fluent builder for every `MemoryConfig`
+  field. Re-exported from the crate root.
+
+### Changed
+
+- **`clean_clause` strips common corporate-entity suffixes.** Card
+  values now drop trailing `Inc`, `Corp`, `LLC`, `Ltd`, `Co`,
+  `Company`, `Corporation`, `Incorporated`, and `Limited` so an
+  extractor seeing `Acme Corp.` materialises a card value of `Acme`.
+  `engine_version` for principal-rules cards bumps from `"1"` to
+  `"2"` so consumers can detect the normalised values. Existing
+  cards on disk are unchanged.
+- **`MemoryGraph::cards_for_query`.** New trait method with a
+  default implementation; backends with index support can override
+  to filter inside their own locking. `MemvidStore` overrides to
+  filter behind the inner mutex and clone only matching cards,
+  removing the per-query full-archive snapshot that
+  `select_entity_mentions` previously paid.
+- **`MemvidFilter::is_valid` / `MemvidFilter::errors`.** Inspect
+  validity programmatically before issuing a search; pairs with the
+  existing `MemvidError::UnsupportedFilter` return path.
+  `SearchFilter::or` now also logs a `tracing::warn!` so silent
+  rejections are observable.
 - **Optional `observe` feature.** Pulls `rig-tap` as a runtime
   dependency and emits structured observability events from three tap
   points: `memory.frame_written` whenever the persist hook,

@@ -67,8 +67,7 @@ mod app {
 
         let base_url = std::env::var("OLLAMA_API_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:11434".to_string());
-        let model_name =
-            std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen3.5:9b".to_string());
+        let model_name = std::env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen3.5:9b".to_string());
         println!("Ollama @ {base_url}, model = {model_name}");
 
         let client = ollama::Client::builder()
@@ -81,15 +80,14 @@ mod app {
 
         let hook = MemvidPersistHook::new(
             store.clone(),
-            MemoryConfig {
-                policy: WritePolicy::Raw,
-                commit_each_turn: true,
-                default_tags: vec!["livetest".into()],
-                scope: Some("livetest".into()),
-                principal: Some(principal.clone()),
-                persist_assistant: false,
-                ..MemoryConfig::default()
-            },
+            MemoryConfig::builder()
+                .policy(WritePolicy::Raw)
+                .commit_each_turn(true)
+                .default_tags(vec!["livetest".into()])
+                .scope(Some("livetest".into()))
+                .principal(Some(principal.clone()))
+                .persist_assistant(false)
+                .build(),
         );
 
         let cards_ctx = MemoryCardContext::new(

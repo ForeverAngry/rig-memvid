@@ -20,11 +20,10 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 ## Status
 
-- Crate version: `0.1.5`.
+- Crate version: `0.2.0`.
 - Rust edition: 2024.
 - MSRV: 1.89.
-- `rig-core` dependency: `0.37.0` with default features disabled, renamed to `rig` so the historic `use rig::...` paths still work.
-- `memvid-core` dependency: `2.0.139` with default features disabled.
+- Upstream dependency versions are single-sourced in [Cargo.toml](Cargo.toml); the badges above link to crates.io for the current pinned versions of `rig-core` (renamed to `rig` so the historic `use rig::...` paths still work) and `memvid-core`. Both are pulled with `default-features = false`.
 - Runtime stance: runtime-agnostic library; `tokio` is only a dev-dependency for tests and examples.
 - Platform stance: not supported on `wasm` targets because `memvid-core` requires synchronous file I/O and OS-level file locking.
 - Current Unreleased work restores memvid's default SIMD distance kernels through a new default `simd` feature, adds structured-memory card/context surfaces, principal-aware persistence, Logic Mesh pass-through, and local-model memory examples.
@@ -49,7 +48,7 @@ coordination lives in
 
 ## Key Types
 
-- [src/store.rs](src/store.rs): `MemvidStore`, the cloneable `Arc<Mutex<Memvid>>` wrapper implementing Rig retrieval and insertion traits.
+- [src/store.rs](src/store.rs): `MemvidStore`, the cloneable `Arc<Mutex<Memvid>>` wrapper implementing Rig retrieval and insertion traits. Access to the underlying archive is **serialised through a single mutex**: clones share the lock, so parallel readers must open separate read-only handles (see Gotchas).
 - [src/store.rs](src/store.rs): `MemvidStoreBuilder`, with file lifecycle methods, lexical enablement, snippet sizing, ACL context, read-only open, and vector embedder configuration when `vec` is enabled.
 - [src/store.rs](src/store.rs): `MemvidFilter`, a Rig `SearchFilter` adapter for `uri`, `scope`, `as_of_frame`, and `as_of_ts` predicates.
 - [src/hook.rs](src/hook.rs): `MemvidPersistHook<M>`, a Rig `PromptHook` implementation that writes user prompts and assistant responses into `MemvidStore`.
@@ -61,7 +60,7 @@ The crate re-exports `memvid_core` so callers can construct `PutOptions`, `AclCo
 
 ## Integration With Rig
 
-`rig-memvid` pins `rig-core = 0.37.0` in [Cargo.toml](Cargo.toml). `MemvidStore` plugs into Rig's vector-store flow, including `VectorStoreIndex` and `InsertDocuments`. `MemvidPersistHook<M>` plugs into Rig's prompt lifecycle via `PromptHook<M>` for any `CompletionModel`.
+`rig-memvid` pins `rig-core` in [Cargo.toml](Cargo.toml). `MemvidStore` plugs into Rig's vector-store flow, including `VectorStoreIndex` and `InsertDocuments`. `MemvidPersistHook<M>` plugs into Rig's prompt lifecycle via `PromptHook<M>` for any `CompletionModel`.
 
 It is community-maintained and not part of the upstream `rig` repository.
 
@@ -165,7 +164,7 @@ Selection strategies (`CardSelection`):
   Useful as a "what does the agent know about the user right now"
   preamble.
 - `ForPrincipal(entity)` — cards for one stable entity regardless of
-  query text. Pair with `MemoryConfig { principal: Some(entity), .. }`
+  query text. Pair with `MemoryConfig::builder().principal(Some(entity))…build()`
   so first-person user turns such as `I like espresso` are persisted as
   that entity's structured memories. Principal selection also expands
   one hop through relationship-card values, so `alice/manager = Bob`
@@ -259,12 +258,25 @@ Examples must also continue to build with `cargo build --examples`.
 ## Gotchas
 
 - `MemvidStore` uses `std::sync::Mutex`, not `tokio::sync::Mutex`, to remain runtime-agnostic. Guards are always dropped before `.await` points.
-- Reads cannot run in parallel through one `MemvidStore` handle because the underlying `Memvid` API takes `&mut self`. Open separate read-only handles for high-concurrency read workloads.
+- Reads cannot run in parallel through one `MemvidStore` handle because the underlying `Memvid` API takes `&mut self` and every operation goes through a single `std::sync::Mutex` inside the store. Clones of a `MemvidStore` all share that lock. For high-concurrency read workloads, open separate handles with `MemvidStoreBuilder::open_read_only`, which gives each reader its own `Memvid` instance and lets them progress independently.
 - `MemvidStore::search` is the raw memvid path. Do not call it from inside a `WriteTransform`; hook writes already go through the same store and a re-entrant call can deadlock.
 - `MemvidFilter::gt`, `lt`, and `or` are rejected because they do not map onto memvid's query model.
 - The `vec` path only honors `MemvidFilter::scope`; `uri`, `as_of_frame`, and `as_of_ts` are unsupported on vector search.
 - `InMemoryStore` is deterministic and dependency-free, but it is lexical token overlap only, not semantic vector retrieval.
 - `rig-memvid` intentionally fails to compile on `wasm` targets with a clear message.
+
+## Building from source
+
+The committed `[patch.crates-io]` table in `Cargo.toml` overrides
+`rig-compose` and `rig-tap` to sibling checkouts (`../rig-compose`,
+`../rig-tap`). `rig-tap` is not yet published to crates.io, so a clean
+clone of this repository will not build on its own. Either:
+
+- clone the siblings next to this repo (`git clone https://github.com/ForeverAngry/rig-compose ../rig-compose && git clone https://github.com/ForeverAngry/rig-tap ../rig-tap`), or
+- remove the corresponding lines from `[patch.crates-io]` locally (only `rig-compose` is on crates.io today; `rig-tap` will gate the `observe` feature until it is published).
+
+CI mirrors the sibling-clone approach. This file pins the workflow once
+`rig-tap` ships on crates.io.
 
 ## Ecosystem
 
@@ -283,9 +295,9 @@ flowchart TD
     compose -. "Rig-shaped kernel; no direct rig-core dep" .-> rig
     resources -- "rig-compose = 0.3; features: security, graph, full" --> compose
     mcp -- "rig-compose = 0.3; rmcp stdio bridge" --> compose
-    memvid -- "rig-core = 0.37.0; features: lex, simd, vec, api_embed, temporal, encryption, compaction, context-projection, observe" --> rig
+    memvid -- "rig-core (default-features = false); features: lex, simd, vec, api_embed, temporal, encryption, compaction, context-projection, observe" --> rig
     memvid -. "optional rig-tap = 0.1 via observe feature" .-> observe
-    model_meta -. "optional rig-core = 0.37 via rig-hook" .-> rig
+    model_meta -. "optional rig-core via rig-hook" .-> rig
 ```
 
 Pinned Rig-facing dependencies from the current manifests:

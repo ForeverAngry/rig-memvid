@@ -120,6 +120,14 @@ impl<E: Episode> InMemoryStore<E> {
     /// order.
     pub async fn append(&self, episode: E) -> Result<String, InMemoryError> {
         let mut inner = self.inner.lock().map_err(|_| InMemoryError::Poisoned)?;
+        // L5: `saturating_add` is correct but worth a comment — once
+        // `next_key` reaches `u64::MAX` every subsequent append produces
+        // the same key, and `episodes.push` happily accepts duplicates.
+        // The in-memory store is a test fake (see the module doc), so
+        // hitting that ceiling means the test loop has run >= 2^64
+        // turns and the duplicate-key behaviour is the smallest of the
+        // caller's problems. The real `MemvidStore` uses memvid's
+        // frame-id allocator, which has its own overflow handling.
         inner.next_key = inner.next_key.saturating_add(1);
         let key = format!("ep-{:016x}", inner.next_key);
         inner.episodes.push((key.clone(), episode));

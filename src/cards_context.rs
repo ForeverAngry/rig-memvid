@@ -123,6 +123,17 @@ where
     /// configured [`CardSelection`]. Public so tests and tools can
     /// inspect what the agent would see.
     pub fn select(&self, query: &str) -> Result<Vec<MemoryCard>, G::Error> {
+        // Selection strategies issue independent backend reads
+        // (`memory_card_count`, `all_memory_cards`, `entity_memories`,
+        // …) without holding a transactional snapshot across them. That
+        // means a concurrent writer can interleave between calls, so a
+        // strategy that compares an entity-specific result with a
+        // global all-cards count may observe an old count and a new
+        // card. We accept that race intentionally: card selection is a
+        // best-effort context-projection helper, not a consistency
+        // boundary, and the cards layer is monotonic in practice (the
+        // worst case is missing a card that lands mid-selection — it
+        // will surface on the next turn).
         match &self.strategy {
             CardSelection::EntityMentions => self.select_entity_mentions(query),
             CardSelection::RecentCards => self.select_recent(),
@@ -132,42 +143,26 @@ where
     }
 
     fn select_entity_mentions(&self, query: &str) -> Result<Vec<MemoryCard>, G::Error> {
-        if self.graph.memory_card_count()? == 0 {
-            return Ok(Vec::new());
-        }
-        let needle = query.to_lowercase();
-
-        // Snapshot every card once, then filter in pure Rust. Cards are
-        // already in memory inside the backend; this avoids any
-        // re-entrant per-entity reader calls.
-        let all = self.graph.all_memory_cards()?;
-        let mut hits: Vec<MemoryCard> = all
-            .into_iter()
-            .filter(|card| {
-                let entity = card.entity.to_lowercase();
-                if entity.is_empty() {
-                    return false;
-                }
-                contains_word(&needle, &entity)
-            })
-            .collect();
+        // Delegate the entity-mention filter to the backend so graph
+        // implementations can apply it behind their own locking and
+        // avoid the full-archive clone that the default trait impl
+        // performs.
+        let mut hits = self.graph.cards_for_query(query)?;
         hits.sort_by_key(|c| std::cmp::Reverse(c.created_at));
         Ok(hits)
     }
 
     fn select_recent(&self) -> Result<Vec<MemoryCard>, G::Error> {
-        if self.graph.memory_card_count()? == 0 {
-            return Ok(Vec::new());
-        }
+        // The previous `memory_card_count == 0` short-circuit was
+        // redundant: an empty `Vec` is already correct, and skipping
+        // it costs one lock acquisition we already pay inside the
+        // backend call.
         let mut all = self.graph.all_memory_cards()?;
         all.sort_by_key(|c| std::cmp::Reverse(c.created_at));
         Ok(all)
     }
 
     fn select_for_principal(&self, principal: &str) -> Result<Vec<MemoryCard>, G::Error> {
-        if self.graph.memory_card_count()? == 0 {
-            return Ok(Vec::new());
-        }
         let mut hits = self.graph.entity_memories(principal)?;
         let lower = principal.to_lowercase();
         if hits.is_empty() && lower != principal {
@@ -211,9 +206,6 @@ where
     }
 
     fn select_preferences(&self, entities: &[String]) -> Result<Vec<MemoryCard>, G::Error> {
-        if self.graph.memory_card_count()? == 0 {
-            return Ok(Vec::new());
-        }
         let mut hits = Vec::new();
         for ent in entities {
             hits.extend(self.graph.entity_preferences(ent)?);
@@ -233,7 +225,7 @@ fn same_card(left: &MemoryCard, right: &MemoryCard) -> bool {
 ///
 /// Avoids matching `"art"` inside `"smart"` while staying dependency-free.
 /// Both inputs must already be lowercased by the caller.
-fn contains_word(haystack: &str, needle: &str) -> bool {
+pub(crate) fn contains_word(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() || haystack.len() < needle.len() {
         return false;
     }
@@ -400,26 +392,28 @@ fn card_relevance_score(query: &str, card: &MemoryCard) -> f64 {
     let value = card.value.to_lowercase();
 
     let entity_matches = !entity.is_empty() && contains_word(query, &entity);
+    let slot_query_match = !slot.is_empty() && contains_word(query, &slot);
+    let value_query_match = !value.is_empty() && contains_word(query, &value);
     if entity_matches {
         score += 5.0;
-        if card.kind == MemoryKind::Relationship
-            && query_matches(
-                query,
-                &["manager", "boss", "reports", "report", "relationship"],
-            )
+        if card.kind == MemoryKind::Relationship && query_matches(query, RELATIONSHIP_INTENT_TERMS)
         {
             score += 4.0;
         }
     }
-    if !slot.is_empty() && contains_word(query, &slot) {
+    if slot_query_match {
         score += 4.0;
     }
-    if !value.is_empty() && contains_word(query, &value) {
+    if value_query_match {
         score += 2.0;
     }
 
     score += slot_intent_score(query, &slot);
-    score += kind_intent_score(query, card.kind);
+    score += kind_intent_score(
+        query,
+        card.kind,
+        entity_matches || slot_query_match || value_query_match,
+    );
 
     if query_terms_match(query, &slot) {
         score += 1.0;
@@ -491,46 +485,71 @@ fn slot_intent_score(query: &str, slot: &str) -> f64 {
     0.0
 }
 
-fn kind_intent_score(query: &str, kind: MemoryKind) -> f64 {
+/// Query terms that indicate intent to retrieve a [`MemoryKind::Preference`]
+/// card.
+const PREFERENCE_INTENT_TERMS: &[&str] = &[
+    "like",
+    "likes",
+    "prefer",
+    "prefers",
+    "preference",
+    "preferences",
+    "dislike",
+    "dislikes",
+];
+
+/// Query terms that indicate intent to retrieve a [`MemoryKind::Profile`]
+/// card.
+const PROFILE_INTENT_TERMS: &[&str] = &[
+    "allergic", "allergy", "avoid", "serve", "food", "profile", "about",
+];
+
+/// Query terms that indicate intent to retrieve a [`MemoryKind::Relationship`]
+/// card.
+const RELATIONSHIP_INTENT_TERMS: &[&str] =
+    &["manager", "boss", "reports", "report", "relationship"];
+
+/// Score a card's [`MemoryKind`] against a free-text query.
+///
+/// Returns a non-zero intent bonus only when the card already matched the
+/// query on entity, slot, or value (`card_matched_any == true`). Without
+/// that gate a query like "alice's manager" would award every
+/// `Relationship` card +2.0 — including unrelated ones for Bob — and let
+/// recency drag noise to the top of the ranking. The only exception is
+/// [`MemoryKind::Fact`], which still earns a small baseline regardless of
+/// match status because every other ranking signal already accounts for
+/// recency / freshness.
+fn kind_intent_score(query: &str, kind: MemoryKind, card_matched_any: bool) -> f64 {
+    if !card_matched_any {
+        return match kind {
+            MemoryKind::Fact => 0.5,
+            _ => 0.0,
+        };
+    }
     match kind {
-        MemoryKind::Preference
-            if query_matches(
-                query,
-                &[
-                    "like",
-                    "likes",
-                    "prefer",
-                    "prefers",
-                    "preference",
-                    "preferences",
-                    "dislike",
-                    "dislikes",
-                ],
-            ) =>
-        {
-            2.0
+        MemoryKind::Preference => {
+            if query_matches(query, PREFERENCE_INTENT_TERMS) {
+                2.0
+            } else {
+                0.0
+            }
         }
-        MemoryKind::Profile
-            if query_matches(
-                query,
-                &[
-                    "allergic", "allergy", "avoid", "serve", "food", "profile", "about",
-                ],
-            ) =>
-        {
-            2.0
+        MemoryKind::Profile => {
+            if query_matches(query, PROFILE_INTENT_TERMS) {
+                2.0
+            } else {
+                0.0
+            }
         }
-        MemoryKind::Relationship
-            if query_matches(
-                query,
-                &["manager", "boss", "reports", "report", "relationship"],
-            ) =>
-        {
-            2.0
+        MemoryKind::Relationship => {
+            if query_matches(query, RELATIONSHIP_INTENT_TERMS) {
+                2.0
+            } else {
+                0.0
+            }
         }
         MemoryKind::Fact => 0.5,
-        MemoryKind::Event | MemoryKind::Goal | MemoryKind::Other | MemoryKind::Profile => 0.0,
-        MemoryKind::Preference | MemoryKind::Relationship => 0.0,
+        MemoryKind::Event | MemoryKind::Goal | MemoryKind::Other => 0.0,
     }
 }
 
@@ -646,6 +665,12 @@ pub struct CardDoc {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -687,6 +712,100 @@ mod tests {
             engine_version: "0".into(),
             confidence: None,
             created_at: 0,
+        }
+    }
+
+    fn pref_card(entity: &str) -> MemoryCard {
+        let mut card = stub_card(entity);
+        card.kind = MemoryKind::Preference;
+        card.slot = "drink".into();
+        card.value = "espresso".into();
+        card
+    }
+
+    #[test]
+    fn kind_intent_score_requires_card_match() {
+        // The Preference intent bonus (+2.0) must only fire when the
+        // card actually matched the query on entity, slot, or value.
+        // Otherwise a noisy archive of unrelated Preference cards
+        // would inflate every "like / prefer" query.
+        let query = "what does alice prefer?";
+        let alice_card = pref_card("alice");
+        // Unrelated preference card: different entity, slot, and value.
+        let mut unrelated = pref_card("bob");
+        unrelated.slot = "music_genre".into();
+        unrelated.value = "jazz".into();
+        let alice_score = card_relevance_score(query, &alice_card);
+        let unrelated_score = card_relevance_score(query, &unrelated);
+        assert!(
+            alice_score > unrelated_score,
+            "matched alice card {alice_score} must beat unrelated card {unrelated_score}"
+        );
+        // No entity / slot / value overlap → kind_intent_score must
+        // return 0.0 for unrelated Preference cards.
+        assert_eq!(
+            super::kind_intent_score(query, MemoryKind::Preference, false),
+            0.0
+        );
+        assert_eq!(
+            super::kind_intent_score(query, MemoryKind::Preference, true),
+            2.0
+        );
+        // Fact cards still get the baseline 0.5 even without a match
+        // so general facts remain visible to noisy queries.
+        assert_eq!(
+            super::kind_intent_score(query, MemoryKind::Fact, false),
+            0.5
+        );
+    }
+
+    #[test]
+    fn t2_old_relevant_card_beats_recent_noise() {
+        // T2: rank_cards must place a query-matched card above ten
+        // recent, unrelated cards even when the matching card is the
+        // oldest entry. Recency only carries a 0.01 weighting, so the
+        // entity-match (+5.0) dominates.
+        let mut relevant = pref_card("alice");
+        relevant.value = "espresso".into();
+        relevant.created_at = 0; // oldest
+        let mut cards = vec![relevant.clone()];
+        for i in 1..=10 {
+            let mut noise = pref_card("bob");
+            noise.value = format!("noise-{i}");
+            noise.created_at = i; // strictly newer than `relevant`
+            cards.push(noise);
+        }
+        let ranked = rank_cards("what does alice prefer?", cards);
+        let top = ranked.first().expect("at least one ranked card");
+        assert_eq!(
+            top.1.entity, "alice",
+            "expected alice card on top, got {:?}",
+            top.1
+        );
+    }
+
+    #[test]
+    fn t3_rank_cards_with_no_match_returns_low_scores() {
+        // T3: when no card matches the query and no slot/intent
+        // heuristics fire, rank_cards must keep relevance at the
+        // recency floor — no spurious +5.0 entity bonus.
+        let mut bob = pref_card("bob");
+        bob.slot = "music_genre".into();
+        bob.value = "jazz".into();
+        let mut carol = pref_card("carol");
+        carol.slot = "music_genre".into();
+        carol.value = "rock".into();
+        let cards = vec![bob, carol];
+        // Query mentions no entity, slot, value, kind-intent term, or
+        // slot-intent term present on these cards.
+        let ranked = rank_cards("how is the weather today?", cards);
+        assert_eq!(ranked.len(), 2);
+        for (score, card) in &ranked {
+            assert!(
+                *score <= 1.0 + f64::EPSILON,
+                "unmatched {entity} scored {score}; expected <= 1.0",
+                entity = card.entity
+            );
         }
     }
 }

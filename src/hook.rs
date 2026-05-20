@@ -46,8 +46,77 @@ impl std::fmt::Debug for WritePolicy {
     }
 }
 
+/// Callback type for [`WriteFailure::Custom`]. Receives the failing
+/// phase plus the underlying [`crate::MemvidError`] and returns a
+/// [`WriteFailureAction`] telling the hook whether to keep going or
+/// halt the agent.
+pub type WriteFailureCallback =
+    Arc<dyn Fn(WriteFailurePhase, &crate::MemvidError) -> WriteFailureAction + Send + Sync>;
+
+/// What the [`MemvidPersistHook`] does when a frame fails to write.
+///
+/// Defaults to [`WriteFailure::Warn`] so existing behaviour is preserved:
+/// the failure is logged via `tracing::warn!` and the turn continues. Operators
+/// who would rather halt the agent than silently lose memory writes can
+/// switch to [`WriteFailure::Halt`]; advanced callers can install a
+/// [`WriteFailure::Custom`] callback (e.g. to update a counter, page on
+/// an SLO breach, or fall back to a sidecar log).
+#[derive(Clone, Default)]
+pub enum WriteFailure {
+    /// Log the failure at `WARN` and continue the turn. Default — matches
+    /// pre-0.2 behaviour.
+    #[default]
+    Warn,
+    /// Log the failure at `ERROR`, emit a `tracing` event, and signal the
+    /// agent to stop via `HookAction::Terminate` on the next return path.
+    /// Useful when the agent's value is bounded by durable memory.
+    Halt,
+    /// Run a caller-provided callback with the failure phase and error.
+    /// Returning [`WriteFailureAction::Continue`] keeps the turn alive;
+    /// [`WriteFailureAction::Halt`] stops the agent.
+    Custom(WriteFailureCallback),
+}
+
+impl std::fmt::Debug for WriteFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Warn => f.write_str("WriteFailure::Warn"),
+            Self::Halt => f.write_str("WriteFailure::Halt"),
+            Self::Custom(_) => f.write_str("WriteFailure::Custom(<fn>)"),
+        }
+    }
+}
+
+/// Which stage of frame persistence raised the error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WriteFailurePhase {
+    /// `put_text_uncommitted` failed; the frame text was not appended.
+    Put,
+    /// `put_memory_card` failed; the structured card was not appended.
+    PutCard,
+    /// `commit` failed; previously appended frames may or may not be flushed
+    /// depending on the underlying memvid error.
+    Commit,
+}
+
+/// Decision returned by a [`WriteFailure::Custom`] callback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WriteFailureAction {
+    /// Keep processing the turn (matches the default warn-and-continue path).
+    Continue,
+    /// Halt the agent on the next return point.
+    Halt,
+}
+
 /// Configuration for [`MemvidPersistHook`].
+///
+/// `MemoryConfig` is `#[non_exhaustive]` so new fields can be added without a
+/// SemVer-major bump; build instances through [`MemoryConfig::default`] +
+/// field updates, or through [`MemoryConfig::builder`] for a fluent shape.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct MemoryConfig {
     /// What to persist on each turn.
     pub policy: WritePolicy,
@@ -108,6 +177,25 @@ pub struct MemoryConfig {
     /// decouples telemetry correlation from memvid's URI-prefix scope.
     /// No effect when the `observe` feature is off.
     pub observe_conversation_id: Option<String>,
+    /// What to do when a frame fails to write. Defaults to
+    /// [`WriteFailure::Warn`] (log + continue) to preserve pre-0.2
+    /// behaviour. Switch to [`WriteFailure::Halt`] when durable memory is a
+    /// hard requirement, or supply a [`WriteFailure::Custom`] callback to
+    /// route the failure into your own metrics / alerting.
+    pub on_write_failure: WriteFailure,
+    /// Whether to rewrite first-person pronouns in user turns into the
+    /// configured [`Self::principal`] (English-only heuristic). Defaults
+    /// to `true`, but the rewrite is also a no-op when `principal` is
+    /// `None`. Set to `false` to disable the heuristic entirely (e.g.
+    /// for non-English transcripts or when callers already canonicalise
+    /// text upstream).
+    ///
+    /// The rewrite also short-circuits on a per-text basis when the
+    /// turn contains a triple-backtick code fence or a balanced
+    /// double-quoted span containing the standalone token `I`; both are
+    /// strong signals that the literal `I` is quoted speech or code and
+    /// must not be rewritten.
+    pub rewrite_principal_pronouns: bool,
 }
 
 impl Default for MemoryConfig {
@@ -124,7 +212,110 @@ impl Default for MemoryConfig {
             extract_dates: true,
             extract_triplets: true,
             observe_conversation_id: None,
+            on_write_failure: WriteFailure::default(),
+            rewrite_principal_pronouns: true,
         }
+    }
+}
+
+impl MemoryConfig {
+    /// Start a [`MemoryConfigBuilder`] for fluent construction. Equivalent
+    /// to `MemoryConfigBuilder::default()` but easier to discover.
+    pub fn builder() -> MemoryConfigBuilder {
+        MemoryConfigBuilder::default()
+    }
+}
+
+/// Fluent builder for [`MemoryConfig`].
+///
+/// `MemoryConfig` is `#[non_exhaustive]` to keep adding fields
+/// SemVer-additive. Prefer this builder over struct-literal construction
+/// so future fields land transparently.
+///
+/// ```rust,no_run
+/// use rig_memvid::{MemoryConfig, WritePolicy};
+/// let config = MemoryConfig::builder()
+///     .policy(WritePolicy::Raw)
+///     .commit_each_turn(false)
+///     .principal(Some("Alice".into()))
+///     .persist_assistant(false)
+///     .build();
+/// # let _ = config;
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct MemoryConfigBuilder {
+    config: MemoryConfig,
+}
+
+impl MemoryConfigBuilder {
+    /// Set the [`WritePolicy`].
+    pub fn policy(mut self, policy: WritePolicy) -> Self {
+        self.config.policy = policy;
+        self
+    }
+    /// Whether to `commit()` after every turn.
+    pub fn commit_each_turn(mut self, commit_each_turn: bool) -> Self {
+        self.config.commit_each_turn = commit_each_turn;
+        self
+    }
+    /// Tags applied to every persisted frame.
+    pub fn default_tags(mut self, tags: Vec<String>) -> Self {
+        self.config.default_tags = tags;
+        self
+    }
+    /// Logical scope (URI prefix) for every persisted frame.
+    pub fn scope(mut self, scope: Option<String>) -> Self {
+        self.config.scope = scope;
+        self
+    }
+    /// Stable identity for the human side of the conversation.
+    pub fn principal(mut self, principal: Option<String>) -> Self {
+        self.config.principal = principal;
+        self
+    }
+    /// Whether to persist assistant turns.
+    pub fn persist_assistant(mut self, persist_assistant: bool) -> Self {
+        self.config.persist_assistant = persist_assistant;
+        self
+    }
+    /// Whether to add deterministic supplemental profile / relationship cards.
+    pub fn supplemental_profile_cards(mut self, on: bool) -> Self {
+        self.config.supplemental_profile_cards = on;
+        self
+    }
+    /// Run memvid's auto-tagger over each persisted frame.
+    pub fn auto_tag(mut self, on: bool) -> Self {
+        self.config.auto_tag = on;
+        self
+    }
+    /// Run memvid's date extractor over each persisted frame.
+    pub fn extract_dates(mut self, on: bool) -> Self {
+        self.config.extract_dates = on;
+        self
+    }
+    /// Run memvid's triplet extractor over each persisted frame.
+    pub fn extract_triplets(mut self, on: bool) -> Self {
+        self.config.extract_triplets = on;
+        self
+    }
+    /// Telemetry conversation ID for the `observe` feature.
+    pub fn observe_conversation_id(mut self, id: Option<String>) -> Self {
+        self.config.observe_conversation_id = id;
+        self
+    }
+    /// Policy for frame-write failures.
+    pub fn on_write_failure(mut self, policy: WriteFailure) -> Self {
+        self.config.on_write_failure = policy;
+        self
+    }
+    /// Enable or disable the English-only principal-pronoun rewrite.
+    pub fn rewrite_principal_pronouns(mut self, on: bool) -> Self {
+        self.config.rewrite_principal_pronouns = on;
+        self
+    }
+    /// Finalise the builder and return a [`MemoryConfig`].
+    pub fn build(self) -> MemoryConfig {
+        self.config
     }
 }
 
@@ -136,6 +327,13 @@ impl Default for MemoryConfig {
 pub struct MemvidPersistHook<M> {
     store: MemvidStore,
     config: MemoryConfig,
+    /// Set by [`MemvidPersistHook::write`] when [`WriteFailure::Halt`]
+    /// (or a [`WriteFailure::Custom`] callback returning
+    /// [`WriteFailureAction::Halt`]) fires. The next call into a
+    /// `PromptHook` method observes this flag and returns
+    /// [`HookAction::terminate`] so the agent loop terminates with the
+    /// failure surfaced through `tracing::error!`.
+    halt: Arc<std::sync::atomic::AtomicBool>,
     _model: PhantomData<fn() -> M>,
 }
 
@@ -144,6 +342,7 @@ impl<M> Clone for MemvidPersistHook<M> {
         Self {
             store: self.store.clone(),
             config: self.config.clone(),
+            halt: self.halt.clone(),
             _model: PhantomData,
         }
     }
@@ -163,6 +362,7 @@ impl<M> MemvidPersistHook<M> {
         Self {
             store,
             config,
+            halt: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             _model: PhantomData,
         }
     }
@@ -206,7 +406,7 @@ impl<M> MemvidPersistHook<M> {
         if text.is_empty() {
             return;
         }
-        let text = if chat_role == "user" {
+        let text = if chat_role == "user" && self.config.rewrite_principal_pronouns {
             self.config
                 .principal
                 .as_deref()
@@ -220,12 +420,7 @@ impl<M> MemvidPersistHook<M> {
         let frame_id = match self.store.put_text_uncommitted(&text, opts) {
             Ok(frame_id) => frame_id,
             Err(err) => {
-                tracing::warn!(
-                    target: "rig_memvid::hook",
-                    error = %err,
-                    role = chat_role,
-                    "failed to persist message into memvid",
-                );
+                self.handle_write_failure(WriteFailurePhase::Put, chat_role, &err);
                 return;
             }
         };
@@ -251,12 +446,7 @@ impl<M> MemvidPersistHook<M> {
         {
             for card in supplemental_memory_cards(&text, principal, frame_id, scope.clone()) {
                 if let Err(err) = self.store.put_memory_card(card) {
-                    tracing::warn!(
-                        target: "rig_memvid::hook",
-                        error = %err,
-                        role = chat_role,
-                        "failed to persist supplemental memory card into memvid",
-                    );
+                    self.handle_write_failure(WriteFailurePhase::PutCard, chat_role, &err);
                 }
             }
         }
@@ -264,13 +454,74 @@ impl<M> MemvidPersistHook<M> {
         if self.config.commit_each_turn
             && let Err(err) = self.store.commit()
         {
-            tracing::warn!(
-                target: "rig_memvid::hook",
-                error = %err,
-                role = chat_role,
-                "failed to persist message into memvid",
-            );
+            self.handle_write_failure(WriteFailurePhase::Commit, chat_role, &err);
         }
+    }
+
+    /// Apply the configured [`WriteFailure`] policy to a single failure.
+    /// Always logs through `tracing`; may also flip `self.halt` so the next
+    /// trait method returns [`HookAction::terminate`].
+    fn handle_write_failure(
+        &self,
+        phase: WriteFailurePhase,
+        chat_role: &str,
+        err: &crate::MemvidError,
+    ) {
+        let phase_str = match phase {
+            WriteFailurePhase::Put => "put",
+            WriteFailurePhase::PutCard => "put_card",
+            WriteFailurePhase::Commit => "commit",
+        };
+        match &self.config.on_write_failure {
+            WriteFailure::Warn => {
+                tracing::warn!(
+                    target: "rig_memvid::hook",
+                    error = %err,
+                    role = chat_role,
+                    phase = phase_str,
+                    "failed to persist into memvid",
+                );
+            }
+            WriteFailure::Halt => {
+                tracing::error!(
+                    target: "rig_memvid::hook",
+                    error = %err,
+                    role = chat_role,
+                    phase = phase_str,
+                    "failed to persist into memvid; halting agent per WriteFailure::Halt",
+                );
+                self.halt.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            WriteFailure::Custom(callback) => {
+                let action = (callback)(phase, err);
+                if matches!(action, WriteFailureAction::Halt) {
+                    tracing::error!(
+                        target: "rig_memvid::hook",
+                        error = %err,
+                        role = chat_role,
+                        phase = phase_str,
+                        "failed to persist into memvid; halting agent per WriteFailure::Custom",
+                    );
+                    self.halt.store(true, std::sync::atomic::Ordering::SeqCst);
+                } else {
+                    tracing::warn!(
+                        target: "rig_memvid::hook",
+                        error = %err,
+                        role = chat_role,
+                        phase = phase_str,
+                        "failed to persist into memvid (Custom policy: continue)",
+                    );
+                }
+            }
+        }
+    }
+
+    /// Whether the hook has been asked to halt the agent (latched after a
+    /// write failure under [`WriteFailure::Halt`] or a Custom callback
+    /// returning [`WriteFailureAction::Halt`]). Visible to tests and to the
+    /// `PromptHook` impl below.
+    fn should_halt(&self) -> bool {
+        self.halt.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -309,7 +560,7 @@ fn profile_card(
         .slot(slot)
         .value(value.trim())
         .source(frame_id, source_uri)
-        .engine("rig-memvid:principal-rules", "1")
+        .engine("rig-memvid:principal-rules", "2")
         .confidence(1.0)
         .build(0)
         .ok()
@@ -328,7 +579,7 @@ fn relationship_card(
         .slot(slot)
         .value(value.trim())
         .source(frame_id, source_uri)
-        .engine("rig-memvid:principal-rules", "1")
+        .engine("rig-memvid:principal-rules", "2")
         .confidence(1.0)
         .build(0)
         .ok()
@@ -347,7 +598,7 @@ fn fact_card(
         .slot(slot)
         .value(value.trim())
         .source(frame_id, source_uri)
-        .engine("rig-memvid:principal-rules", "1")
+        .engine("rig-memvid:principal-rules", "2")
         .confidence(1.0)
         .build(0)
         .ok()
@@ -482,7 +733,30 @@ fn clean_clause(text: &str, delimiters: &[char]) -> Option<String> {
         .trim()
         .trim_matches(|c: char| !c.is_alphanumeric() && c != ' ' && c != '_' && c != '-')
         .trim();
-    (!value.is_empty()).then(|| value.to_string())
+    // L2: strip common corporate-entity suffixes so an extractor seeing
+    // `Acme Corp.` or `Initech, LLC` materialises a card whose value is
+    // just `Acme` / `Initech`, matching what downstream relationship
+    // queries (and humans) actually look for. Order matters: longest
+    // suffix first so `Corporation` strips before `Corp`.
+    const CORP_SUFFIXES: &[&str] = &[
+        " incorporated",
+        " corporation",
+        " company",
+        " limited",
+        " inc",
+        " corp",
+        " llc",
+        " ltd",
+        " co",
+    ];
+    let lowered = value.to_lowercase();
+    let stripped = CORP_SUFFIXES
+        .iter()
+        .find_map(|suffix| lowered.strip_suffix(suffix).map(|head| head.len()))
+        .and_then(|head_len| value.get(..head_len))
+        .map(str::trim)
+        .unwrap_or(value);
+    (!stripped.is_empty()).then(|| stripped.to_string())
 }
 
 fn normalize_entity(entity: &str) -> String {
@@ -511,9 +785,45 @@ fn allergy_value(text: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+/// Returns `true` if `text` contains a balanced ASCII double-quoted span
+/// (`"..."`) whose contents include the standalone token `I`. Used by
+/// [`bind_principal`] to refuse rewriting quoted speech.
+fn quoted_span_contains_first_person(text: &str) -> bool {
+    let mut in_quote = false;
+    let mut span_start: usize = 0;
+    for (idx, ch) in text.char_indices() {
+        if ch != '"' {
+            continue;
+        }
+        if !in_quote {
+            in_quote = true;
+            span_start = idx + ch.len_utf8();
+        } else {
+            in_quote = false;
+            if let Some(span) = text.get(span_start..idx) {
+                for tok in span.split_whitespace() {
+                    let core = tok.trim_matches(|c: char| !c.is_alphanumeric() && c != '\'');
+                    if core == "I" {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 fn bind_principal(text: &str, principal: &str) -> String {
     let principal = principal.trim();
     if principal.is_empty() {
+        return text.to_string();
+    }
+
+    // Safety short-circuits: if the turn contains a triple-backtick code
+    // fence, or a balanced double-quoted span containing the standalone
+    // token `I`, refuse to rewrite. Quoted speech / code routinely
+    // contains literal `I` that does not refer to the speaker.
+    if text.contains("```") || quoted_span_contains_first_person(text) {
         return text.to_string();
     }
 
@@ -560,7 +870,12 @@ fn bind_principal(text: &str, principal: &str) -> String {
                 continue;
             }
         }
-        output.push(bind_token(token, principal));
+        // Bare standalone `I` with no recognised verb follower: leave it
+        // alone. This avoids misrewriting Roman numerals (`World War I`),
+        // section headers, or any other context where `I` is not a
+        // first-person pronoun. Recognised pronoun forms (`my`, `me`,
+        // `I'm`, etc.) are handled by the `core != "i"` branch above.
+        output.push(token.to_string());
     }
     output.join(" ")
 }
@@ -681,6 +996,11 @@ where
         if let Some(text) = self.render(prompt) {
             self.write(&text, "user");
         }
+        if self.should_halt() {
+            return HookAction::terminate(
+                "rig-memvid: persistence failed under WriteFailure::Halt",
+            );
+        }
         HookAction::cont()
     }
 
@@ -700,6 +1020,11 @@ where
             if let Some(text) = self.render(&synthetic) {
                 self.write(&text, "assistant");
             }
+        }
+        if self.should_halt() {
+            return HookAction::terminate(
+                "rig-memvid: persistence failed under WriteFailure::Halt",
+            );
         }
         HookAction::cont()
     }
@@ -743,6 +1068,36 @@ mod tests {
     #[test]
     fn bind_principal_ignores_empty_principal() {
         assert_eq!(bind_principal("I like rust", "  "), "I like rust");
+    }
+
+    #[test]
+    fn bind_principal_is_idempotent() {
+        let once = bind_principal("I like espresso and I dislike tea.", "Alice");
+        let twice = bind_principal(&once, "Alice");
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn bind_principal_skips_quoted_speech() {
+        // Quoted `I` belongs to the speaker being quoted, not the principal.
+        let input = "Bob said \"I love hiking\" yesterday.";
+        assert_eq!(bind_principal(input, "Alice"), input);
+    }
+
+    #[test]
+    fn bind_principal_skips_code_fences() {
+        // Code fences may contain literal `I` identifiers that must not be
+        // rewritten.
+        let input = "Try this:\n```\nlet I = 1;\n```\nthen rerun.";
+        assert_eq!(bind_principal(input, "Alice"), input);
+    }
+
+    #[test]
+    fn bind_principal_leaves_roman_numeral_alone() {
+        // `I` here is a Roman numeral, not a pronoun; no verb in
+        // `principal_verb` follows, so the rewrite must be a no-op.
+        let input = "World War I ended in 1918.";
+        assert_eq!(bind_principal(input, "Alice"), input);
     }
 
     #[test]
@@ -807,5 +1162,70 @@ mod tests {
                 && card.slot == "title"
                 && card.value == "VP"
         }));
+    }
+
+    #[test]
+    fn builder_matches_default() {
+        let from_default = super::MemoryConfig::default();
+        let from_builder = super::MemoryConfig::builder().build();
+        // Spot-check every field the builder is supposed to default.
+        assert_eq!(from_builder.commit_each_turn, from_default.commit_each_turn);
+        assert_eq!(from_builder.default_tags, from_default.default_tags);
+        assert_eq!(from_builder.scope, from_default.scope);
+        assert_eq!(from_builder.principal, from_default.principal);
+        assert_eq!(
+            from_builder.persist_assistant,
+            from_default.persist_assistant
+        );
+        assert_eq!(
+            from_builder.supplemental_profile_cards,
+            from_default.supplemental_profile_cards
+        );
+        assert_eq!(from_builder.auto_tag, from_default.auto_tag);
+        assert_eq!(from_builder.extract_dates, from_default.extract_dates);
+        assert_eq!(from_builder.extract_triplets, from_default.extract_triplets);
+        assert_eq!(
+            from_builder.observe_conversation_id,
+            from_default.observe_conversation_id
+        );
+        assert!(matches!(
+            from_builder.on_write_failure,
+            super::WriteFailure::Warn
+        ));
+        assert_eq!(
+            from_builder.rewrite_principal_pronouns,
+            from_default.rewrite_principal_pronouns
+        );
+        assert!(from_default.rewrite_principal_pronouns);
+    }
+
+    #[test]
+    fn builder_overrides_each_field() {
+        let cfg = super::MemoryConfig::builder()
+            .commit_each_turn(false)
+            .default_tags(vec!["t1".into()])
+            .scope(Some("scope".into()))
+            .principal(Some("Alice".into()))
+            .persist_assistant(false)
+            .supplemental_profile_cards(false)
+            .auto_tag(false)
+            .extract_dates(false)
+            .extract_triplets(false)
+            .observe_conversation_id(Some("conv-1".into()))
+            .on_write_failure(super::WriteFailure::Halt)
+            .rewrite_principal_pronouns(false)
+            .build();
+        assert!(!cfg.commit_each_turn);
+        assert_eq!(cfg.default_tags, vec!["t1".to_string()]);
+        assert_eq!(cfg.scope.as_deref(), Some("scope"));
+        assert_eq!(cfg.principal.as_deref(), Some("Alice"));
+        assert!(!cfg.persist_assistant);
+        assert!(!cfg.supplemental_profile_cards);
+        assert!(!cfg.auto_tag);
+        assert!(!cfg.extract_dates);
+        assert!(!cfg.extract_triplets);
+        assert_eq!(cfg.observe_conversation_id.as_deref(), Some("conv-1"));
+        assert!(matches!(cfg.on_write_failure, super::WriteFailure::Halt));
+        assert!(!cfg.rewrite_principal_pronouns);
     }
 }

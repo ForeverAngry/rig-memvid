@@ -22,6 +22,7 @@ pub enum FrameKind {
 /// the `extra_metadata` map into this struct to reason about the origin
 /// of the retrieved frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct MemvidFrameMetadata {
     /// The schema version of this envelope. Currently `1`.
     pub schema_version: u8,

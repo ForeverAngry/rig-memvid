@@ -93,15 +93,14 @@ mod app {
 
         let hook = MemvidPersistHook::new(
             store.clone(),
-            MemoryConfig {
-                policy: WritePolicy::Raw,
-                commit_each_turn: true,
-                default_tags: vec!["livetest".into(), "mlx".into()],
-                scope: Some("livetest_mlx".into()),
-                principal: Some(principal.clone()),
-                persist_assistant: false,
-                ..MemoryConfig::default()
-            },
+            MemoryConfig::builder()
+                .policy(WritePolicy::Raw)
+                .commit_each_turn(true)
+                .default_tags(vec!["livetest".into(), "mlx".into()])
+                .scope(Some("livetest_mlx".into()))
+                .principal(Some(principal.clone()))
+                .persist_assistant(false)
+                .build(),
         );
 
         let cards_ctx = MemoryCardContext::new(
