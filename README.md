@@ -23,8 +23,7 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 - Crate version: `0.2.0`.
 - Rust edition: 2024.
 - MSRV: 1.89.
-- `rig-core` dependency: `0.37.0` with default features disabled, renamed to `rig` so the historic `use rig::...` paths still work.
-- `memvid-core` dependency: `2.0.139` with default features disabled.
+- Upstream dependency versions are single-sourced in [Cargo.toml](Cargo.toml); the badges above link to crates.io for the current pinned versions of `rig-core` (renamed to `rig` so the historic `use rig::...` paths still work) and `memvid-core`. Both are pulled with `default-features = false`.
 - Runtime stance: runtime-agnostic library; `tokio` is only a dev-dependency for tests and examples.
 - Platform stance: not supported on `wasm` targets because `memvid-core` requires synchronous file I/O and OS-level file locking.
 - Current Unreleased work restores memvid's default SIMD distance kernels through a new default `simd` feature, adds structured-memory card/context surfaces, principal-aware persistence, Logic Mesh pass-through, and local-model memory examples.
@@ -61,7 +60,7 @@ The crate re-exports `memvid_core` so callers can construct `PutOptions`, `AclCo
 
 ## Integration With Rig
 
-`rig-memvid` pins `rig-core = 0.37.0` in [Cargo.toml](Cargo.toml). `MemvidStore` plugs into Rig's vector-store flow, including `VectorStoreIndex` and `InsertDocuments`. `MemvidPersistHook<M>` plugs into Rig's prompt lifecycle via `PromptHook<M>` for any `CompletionModel`.
+`rig-memvid` pins `rig-core` in [Cargo.toml](Cargo.toml). `MemvidStore` plugs into Rig's vector-store flow, including `VectorStoreIndex` and `InsertDocuments`. `MemvidPersistHook<M>` plugs into Rig's prompt lifecycle via `PromptHook<M>` for any `CompletionModel`.
 
 It is community-maintained and not part of the upstream `rig` repository.
 
@@ -283,9 +282,9 @@ flowchart TD
     compose -. "Rig-shaped kernel; no direct rig-core dep" .-> rig
     resources -- "rig-compose = 0.3; features: security, graph, full" --> compose
     mcp -- "rig-compose = 0.3; rmcp stdio bridge" --> compose
-    memvid -- "rig-core = 0.37.0; features: lex, simd, vec, api_embed, temporal, encryption, compaction, context-projection, observe" --> rig
+    memvid -- "rig-core (default-features = false); features: lex, simd, vec, api_embed, temporal, encryption, compaction, context-projection, observe" --> rig
     memvid -. "optional rig-tap = 0.1 via observe feature" .-> observe
-    model_meta -. "optional rig-core = 0.37 via rig-hook" .-> rig
+    model_meta -. "optional rig-core via rig-hook" .-> rig
 ```
 
 Pinned Rig-facing dependencies from the current manifests:

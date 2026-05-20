@@ -59,35 +59,44 @@ async fn served_models(base_url: &str) -> Option<Vec<String>> {
 
 /// Resolve the model to use against the daemon at `base_url`:
 ///   1. honour `requested` if the daemon serves it
-///   2. otherwise fall back to the first served model
-///   3. otherwise return `requested` and let the provider error out
+///   2. otherwise exit nonzero with an actionable message
+///
+/// Silent fallback to a "first served" model is deliberately not
+/// supported — example output is meant to be reproducible against a
+/// known model. Set `MEMVID_ALLOW_FALLBACK=1` to accept the first
+/// served model anyway (handy for CI fixtures).
 async fn resolve_model(base_url: &str, requested: &str) -> String {
     let Some(installed) = served_models(base_url).await else {
         eprintln!(
-            "[warn] could not reach Ollama at {base_url}. \
+            "[error] could not reach Ollama at {base_url}. \
              Is `ollama serve` running?"
         );
-        return requested.to_string();
+        std::process::exit(2);
     };
     if installed.iter().any(|m| m == requested) {
         return requested.to_string();
     }
-    if let Some(first) = installed.first() {
-        eprintln!(
-            "[warn] requested model `{requested}` is not served by {base_url}; \
-             falling back to `{first}`"
-        );
-        eprintln!(
-            "       installed: {}\n       run `ollama pull {requested}` to use the requested one.",
-            installed.join(", ")
-        );
+    let allow_fallback = std::env::var("MEMVID_ALLOW_FALLBACK")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "True"))
+        .unwrap_or(false);
+    if allow_fallback && let Some(first) = installed.first() {
+        eprintln!("[warn] MEMVID_ALLOW_FALLBACK=1 — using `{first}` instead of `{requested}`");
         return first.clone();
     }
     eprintln!(
-        "[warn] no models are served by {base_url}. \
-         Run e.g. `ollama pull {requested}` first."
+        "[error] requested model `{requested}` is not served by {base_url}.\n\
+         Installed: {}\n\
+         Fix:\n  \
+           ollama pull {requested}\n\
+         or set OLLAMA_MODEL to one of the installed models, or\n\
+         set MEMVID_ALLOW_FALLBACK=1 to accept the first served model.",
+        if installed.is_empty() {
+            "(none)".to_string()
+        } else {
+            installed.join(", ")
+        }
     );
-    requested.to_string()
+    std::process::exit(2);
 }
 
 /// Pretty-print a memvid [`MemoryCard`] for the REPL.

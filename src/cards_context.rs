@@ -665,6 +665,12 @@ pub struct CardDoc {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
 mod tests {
     use super::*;
 
@@ -751,5 +757,55 @@ mod tests {
             super::kind_intent_score(query, MemoryKind::Fact, false),
             0.5
         );
+    }
+
+    #[test]
+    fn t2_old_relevant_card_beats_recent_noise() {
+        // T2: rank_cards must place a query-matched card above ten
+        // recent, unrelated cards even when the matching card is the
+        // oldest entry. Recency only carries a 0.01 weighting, so the
+        // entity-match (+5.0) dominates.
+        let mut relevant = pref_card("alice");
+        relevant.value = "espresso".into();
+        relevant.created_at = 0; // oldest
+        let mut cards = vec![relevant.clone()];
+        for i in 1..=10 {
+            let mut noise = pref_card("bob");
+            noise.value = format!("noise-{i}");
+            noise.created_at = i; // strictly newer than `relevant`
+            cards.push(noise);
+        }
+        let ranked = rank_cards("what does alice prefer?", cards);
+        let top = ranked.first().expect("at least one ranked card");
+        assert_eq!(
+            top.1.entity, "alice",
+            "expected alice card on top, got {:?}",
+            top.1
+        );
+    }
+
+    #[test]
+    fn t3_rank_cards_with_no_match_returns_low_scores() {
+        // T3: when no card matches the query and no slot/intent
+        // heuristics fire, rank_cards must keep relevance at the
+        // recency floor — no spurious +5.0 entity bonus.
+        let mut bob = pref_card("bob");
+        bob.slot = "music_genre".into();
+        bob.value = "jazz".into();
+        let mut carol = pref_card("carol");
+        carol.slot = "music_genre".into();
+        carol.value = "rock".into();
+        let cards = vec![bob, carol];
+        // Query mentions no entity, slot, value, kind-intent term, or
+        // slot-intent term present on these cards.
+        let ranked = rank_cards("how is the weather today?", cards);
+        assert_eq!(ranked.len(), 2);
+        for (score, card) in &ranked {
+            assert!(
+                *score <= 1.0 + f64::EPSILON,
+                "unmatched {entity} scored {score}; expected <= 1.0",
+                entity = card.entity
+            );
+        }
     }
 }

@@ -17,10 +17,10 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
 - Principal-aware persistence and supplemental profile cards for common profile and relationship facts.
 - Logic Mesh graph-track pass-through for entity and relationship traversal.
 - Ollama and MLX examples that exercise live local-model memory behavior.
+- `DemotionHook` integration tracking upstream `rig-memory`: long-tail conversation turns can be demoted into `MemvidStore` as an optional adapter without making `rig-memvid` depend on `rig-memory` for default builds.
 
 ## Prototype Grade
 
-- Memory candidates/context packs are emerging, but they are not fully collapsed onto `rig-compose` `ContextItem` / `ContextPack` yet.
 - Structured cards handle useful profile and relationship facts, but stale/conflict handling, supersession policy, archive tiers, and principal-bound recall policy need hardening.
 - Live local-model examples exist, but they must pin intended models and fail loudly on fallback or drift.
 - Logic Mesh traversal is exposed, but graph-backed context planning and eval fixtures are still early.
@@ -31,12 +31,8 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
 2. Project memory candidates into `rig-compose` `ContextItem` with source kind, principal, timestamp, source URI, scope, confidence, supersession state, and retention tier.
 3. Add stale/conflict handling so old facts do not silently compete with newer facts as equal context.
 4. Pin live Ollama examples to explicit models and fail loudly when the requested model is unavailable.
-5. Add eval fixtures that assert selected, omitted, compacted, and used memory.
+5. Add eval fixtures that assert selected, omitted, compacted, and used memory. Drives an explicit dev-dependency on [`rig-evals-rag`](https://crates.io/crates/rig-evals-rag) once its retriever-evals harness lands.
 6. Track upstream Rig compaction outputs and wire them into memory candidates once that surface settles.
-7. Revisit upstream `rig-memory` after PR 1756 is released: evaluate a
-   `DemotionHook` / long-tail memory adapter that writes demoted conversation
-   turns into `MemvidStore`, and keep the integration optional so
-   `rig-memvid` can continue to depend only on `rig-core` for default builds.
 
 ## Maturity Bar
 
@@ -50,3 +46,4 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
 - Do not become a tool router or MCP bridge.
 - Do not add a runtime dependency to library dependencies.
 - Do not upstream `MemoryGraph`-style traits to Rig until a second backend validates the shape.
+- Do not implement encryption-at-rest or ACL-style access policy in the crate. Callers needing those guarantees should layer them at the filesystem (LUKS, FileVault, S3 SSE) or process (Linux capabilities, sandbox) boundary; `MemvidStore` deliberately treats the archive as plaintext that the host environment is expected to protect.
