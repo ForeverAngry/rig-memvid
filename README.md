@@ -265,6 +265,19 @@ Examples must also continue to build with `cargo build --examples`.
 - `InMemoryStore` is deterministic and dependency-free, but it is lexical token overlap only, not semantic vector retrieval.
 - `rig-memvid` intentionally fails to compile on `wasm` targets with a clear message.
 
+## Building from source
+
+The committed `[patch.crates-io]` table in `Cargo.toml` overrides
+`rig-compose` and `rig-tap` to sibling checkouts (`../rig-compose`,
+`../rig-tap`). `rig-tap` is not yet published to crates.io, so a clean
+clone of this repository will not build on its own. Either:
+
+- clone the siblings next to this repo (`git clone https://github.com/ForeverAngry/rig-compose ../rig-compose && git clone https://github.com/ForeverAngry/rig-tap ../rig-tap`), or
+- remove the corresponding lines from `[patch.crates-io]` locally (only `rig-compose` is on crates.io today; `rig-tap` will gate the `observe` feature until it is published).
+
+CI mirrors the sibling-clone approach. This file pins the workflow once
+`rig-tap` ships on crates.io.
+
 ## Ecosystem
 
 These companion crates are maintained as separate repositories. Together they form a small stack around the upstream Rig project: `rig-compose` provides the kernel surface, `rig-resources` contributes reusable skills and tools, `rig-mcp` moves tools across MCP, `rig-memvid` connects Rig agents to persistent `.mv2` memory, `rig-model-meta` abstracts LLM metadata and probes, and `rig-tap` defines the backend-agnostic `ObservabilityEvent` schema that `rig-memvid` emits from under the `observe` feature.

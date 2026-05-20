@@ -331,8 +331,8 @@ pub struct MemvidPersistHook<M> {
     /// (or a [`WriteFailure::Custom`] callback returning
     /// [`WriteFailureAction::Halt`]) fires. The next call into a
     /// `PromptHook` method observes this flag and returns
-    /// [`HookAction::stop`] so the agent loop terminates with the failure
-    /// surfaced through `tracing::error!`.
+    /// [`HookAction::terminate`] so the agent loop terminates with the
+    /// failure surfaced through `tracing::error!`.
     halt: Arc<std::sync::atomic::AtomicBool>,
     _model: PhantomData<fn() -> M>,
 }
@@ -460,7 +460,7 @@ impl<M> MemvidPersistHook<M> {
 
     /// Apply the configured [`WriteFailure`] policy to a single failure.
     /// Always logs through `tracing`; may also flip `self.halt` so the next
-    /// trait method returns [`HookAction::stop`].
+    /// trait method returns [`HookAction::terminate`].
     fn handle_write_failure(
         &self,
         phase: WriteFailurePhase,

@@ -17,9 +17,11 @@ All notable changes to `rig-memvid` will be documented in this file.
   allowed — that is the SemVer-major break and why this is `0.2.0`
   rather than `0.1.6`. New fields will land additively from here.
 - **`MemvidFrameMetadata` is now `#[non_exhaustive]`.** Decoded the
-  same way (`serde_json::from_value`), but downstream construction
-  must use a builder pattern or fall back to deserialising. This is
-  forward-compatible: new fields can ship without another major bump.
+  same way (`serde_json::from_value`); direct struct-literal
+  construction outside this crate is no longer allowed — downstream
+  callers must deserialise (or avoid constructing it directly). This
+  is forward-compatible: new fields can ship without another major
+  bump.
 
 ### Added
 
