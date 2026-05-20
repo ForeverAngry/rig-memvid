@@ -49,7 +49,7 @@ coordination lives in
 
 ## Key Types
 
-- [src/store.rs](src/store.rs): `MemvidStore`, the cloneable `Arc<Mutex<Memvid>>` wrapper implementing Rig retrieval and insertion traits.
+- [src/store.rs](src/store.rs): `MemvidStore`, the cloneable `Arc<Mutex<Memvid>>` wrapper implementing Rig retrieval and insertion traits. Access to the underlying archive is **serialised through a single mutex**: clones share the lock, so parallel readers must open separate read-only handles (see Gotchas).
 - [src/store.rs](src/store.rs): `MemvidStoreBuilder`, with file lifecycle methods, lexical enablement, snippet sizing, ACL context, read-only open, and vector embedder configuration when `vec` is enabled.
 - [src/store.rs](src/store.rs): `MemvidFilter`, a Rig `SearchFilter` adapter for `uri`, `scope`, `as_of_frame`, and `as_of_ts` predicates.
 - [src/hook.rs](src/hook.rs): `MemvidPersistHook<M>`, a Rig `PromptHook` implementation that writes user prompts and assistant responses into `MemvidStore`.
@@ -259,7 +259,7 @@ Examples must also continue to build with `cargo build --examples`.
 ## Gotchas
 
 - `MemvidStore` uses `std::sync::Mutex`, not `tokio::sync::Mutex`, to remain runtime-agnostic. Guards are always dropped before `.await` points.
-- Reads cannot run in parallel through one `MemvidStore` handle because the underlying `Memvid` API takes `&mut self`. Open separate read-only handles for high-concurrency read workloads.
+- Reads cannot run in parallel through one `MemvidStore` handle because the underlying `Memvid` API takes `&mut self` and every operation goes through a single `std::sync::Mutex` inside the store. Clones of a `MemvidStore` all share that lock. For high-concurrency read workloads, open separate handles with `MemvidStoreBuilder::open_read_only`, which gives each reader its own `Memvid` instance and lets them progress independently.
 - `MemvidStore::search` is the raw memvid path. Do not call it from inside a `WriteTransform`; hook writes already go through the same store and a re-entrant call can deadlock.
 - `MemvidFilter::gt`, `lt`, and `or` are rejected because they do not map onto memvid's query model.
 - The `vec` path only honors `MemvidFilter::scope`; `uri`, `as_of_frame`, and `as_of_ts` are unsupported on vector search.

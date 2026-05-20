@@ -400,26 +400,28 @@ fn card_relevance_score(query: &str, card: &MemoryCard) -> f64 {
     let value = card.value.to_lowercase();
 
     let entity_matches = !entity.is_empty() && contains_word(query, &entity);
+    let slot_query_match = !slot.is_empty() && contains_word(query, &slot);
+    let value_query_match = !value.is_empty() && contains_word(query, &value);
     if entity_matches {
         score += 5.0;
-        if card.kind == MemoryKind::Relationship
-            && query_matches(
-                query,
-                &["manager", "boss", "reports", "report", "relationship"],
-            )
+        if card.kind == MemoryKind::Relationship && query_matches(query, RELATIONSHIP_INTENT_TERMS)
         {
             score += 4.0;
         }
     }
-    if !slot.is_empty() && contains_word(query, &slot) {
+    if slot_query_match {
         score += 4.0;
     }
-    if !value.is_empty() && contains_word(query, &value) {
+    if value_query_match {
         score += 2.0;
     }
 
     score += slot_intent_score(query, &slot);
-    score += kind_intent_score(query, card.kind);
+    score += kind_intent_score(
+        query,
+        card.kind,
+        entity_matches || slot_query_match || value_query_match,
+    );
 
     if query_terms_match(query, &slot) {
         score += 1.0;
@@ -491,46 +493,71 @@ fn slot_intent_score(query: &str, slot: &str) -> f64 {
     0.0
 }
 
-fn kind_intent_score(query: &str, kind: MemoryKind) -> f64 {
+/// Query terms that indicate intent to retrieve a [`MemoryKind::Preference`]
+/// card.
+const PREFERENCE_INTENT_TERMS: &[&str] = &[
+    "like",
+    "likes",
+    "prefer",
+    "prefers",
+    "preference",
+    "preferences",
+    "dislike",
+    "dislikes",
+];
+
+/// Query terms that indicate intent to retrieve a [`MemoryKind::Profile`]
+/// card.
+const PROFILE_INTENT_TERMS: &[&str] = &[
+    "allergic", "allergy", "avoid", "serve", "food", "profile", "about",
+];
+
+/// Query terms that indicate intent to retrieve a [`MemoryKind::Relationship`]
+/// card.
+const RELATIONSHIP_INTENT_TERMS: &[&str] =
+    &["manager", "boss", "reports", "report", "relationship"];
+
+/// Score a card's [`MemoryKind`] against a free-text query.
+///
+/// Returns a non-zero intent bonus only when the card already matched the
+/// query on entity, slot, or value (`card_matched_any == true`). Without
+/// that gate a query like "alice's manager" would award every
+/// `Relationship` card +2.0 — including unrelated ones for Bob — and let
+/// recency drag noise to the top of the ranking. The only exception is
+/// [`MemoryKind::Fact`], which still earns a small baseline regardless of
+/// match status because every other ranking signal already accounts for
+/// recency / freshness.
+fn kind_intent_score(query: &str, kind: MemoryKind, card_matched_any: bool) -> f64 {
+    if !card_matched_any {
+        return match kind {
+            MemoryKind::Fact => 0.5,
+            _ => 0.0,
+        };
+    }
     match kind {
-        MemoryKind::Preference
-            if query_matches(
-                query,
-                &[
-                    "like",
-                    "likes",
-                    "prefer",
-                    "prefers",
-                    "preference",
-                    "preferences",
-                    "dislike",
-                    "dislikes",
-                ],
-            ) =>
-        {
-            2.0
+        MemoryKind::Preference => {
+            if query_matches(query, PREFERENCE_INTENT_TERMS) {
+                2.0
+            } else {
+                0.0
+            }
         }
-        MemoryKind::Profile
-            if query_matches(
-                query,
-                &[
-                    "allergic", "allergy", "avoid", "serve", "food", "profile", "about",
-                ],
-            ) =>
-        {
-            2.0
+        MemoryKind::Profile => {
+            if query_matches(query, PROFILE_INTENT_TERMS) {
+                2.0
+            } else {
+                0.0
+            }
         }
-        MemoryKind::Relationship
-            if query_matches(
-                query,
-                &["manager", "boss", "reports", "report", "relationship"],
-            ) =>
-        {
-            2.0
+        MemoryKind::Relationship => {
+            if query_matches(query, RELATIONSHIP_INTENT_TERMS) {
+                2.0
+            } else {
+                0.0
+            }
         }
         MemoryKind::Fact => 0.5,
-        MemoryKind::Event | MemoryKind::Goal | MemoryKind::Other | MemoryKind::Profile => 0.0,
-        MemoryKind::Preference | MemoryKind::Relationship => 0.0,
+        MemoryKind::Event | MemoryKind::Goal | MemoryKind::Other => 0.0,
     }
 }
 
@@ -688,5 +715,49 @@ mod tests {
             confidence: None,
             created_at: 0,
         }
+    }
+
+    fn pref_card(entity: &str) -> MemoryCard {
+        let mut card = stub_card(entity);
+        card.kind = MemoryKind::Preference;
+        card.slot = "drink".into();
+        card.value = "espresso".into();
+        card
+    }
+
+    #[test]
+    fn kind_intent_score_requires_card_match() {
+        // The Preference intent bonus (+2.0) must only fire when the
+        // card actually matched the query on entity, slot, or value.
+        // Otherwise a noisy archive of unrelated Preference cards
+        // would inflate every "like / prefer" query.
+        let query = "what does alice prefer?";
+        let alice_card = pref_card("alice");
+        // Unrelated preference card: different entity, slot, and value.
+        let mut unrelated = pref_card("bob");
+        unrelated.slot = "music_genre".into();
+        unrelated.value = "jazz".into();
+        let alice_score = card_relevance_score(query, &alice_card);
+        let unrelated_score = card_relevance_score(query, &unrelated);
+        assert!(
+            alice_score > unrelated_score,
+            "matched alice card {alice_score} must beat unrelated card {unrelated_score}"
+        );
+        // No entity / slot / value overlap → kind_intent_score must
+        // return 0.0 for unrelated Preference cards.
+        assert_eq!(
+            super::kind_intent_score(query, MemoryKind::Preference, false),
+            0.0
+        );
+        assert_eq!(
+            super::kind_intent_score(query, MemoryKind::Preference, true),
+            2.0
+        );
+        // Fact cards still get the baseline 0.5 even without a match
+        // so general facts remain visible to noisy queries.
+        assert_eq!(
+            super::kind_intent_score(query, MemoryKind::Fact, false),
+            0.5
+        );
     }
 }
