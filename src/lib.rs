@@ -59,6 +59,12 @@ mod memory_graph;
 pub mod metadata;
 #[cfg(all(not(target_family = "wasm"), feature = "context-projection"))]
 pub mod projection;
+#[cfg(all(not(target_family = "wasm"), feature = "context-projection"))]
+pub use projection::{
+    IntoContextItem, MemoryCandidate, MemoryContextPack, SupersededCandidate,
+    card_docs_to_context_items, inmem_hits_to_context_items, items_to_memory_candidates,
+    memory_cards_to_context_items, search_hits_to_context_items, supersede,
+};
 #[cfg(not(target_family = "wasm"))]
 mod store;
 

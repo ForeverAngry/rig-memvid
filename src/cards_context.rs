@@ -593,10 +593,13 @@ where
         }
 
         let mut out = Vec::with_capacity(ranked.len());
+        let mut byte_size = 0usize;
         for (score, card) in ranked {
             let id = card.id.to_string();
+            let text = format_card(&card);
+            byte_size = byte_size.saturating_add(text.len());
             let payload = CardDoc {
-                text: format_card(&card),
+                text,
                 kind: kind_str(card.kind).to_string(),
                 entity: card.entity,
                 slot: card.slot,
@@ -609,6 +612,7 @@ where
             let doc: T = serde_json::from_value(value).map_err(MemvidError::from)?;
             out.push((score, id, doc));
         }
+        emit_card_context_sample(out.len(), byte_size);
         Ok(out)
     }
 
@@ -623,11 +627,28 @@ where
         if ranked.len() > limit {
             ranked.truncate(limit);
         }
+        let byte_size = ranked
+            .iter()
+            .map(|(_, card)| card.entity.len() + card.slot.len() + card.value.len())
+            .sum();
+        emit_card_context_sample(ranked.len(), byte_size);
         Ok(ranked
             .into_iter()
             .map(|(score, card)| (score, card.id.to_string()))
             .collect())
     }
+}
+
+fn emit_card_context_sample(_message_count: usize, _byte_size: usize) {
+    #[cfg(feature = "observe")]
+    rig_tap::emit_kind(
+        "memory-card-context",
+        rig_tap::EventKind::ContextSampled {
+            message_count: _message_count,
+            byte_size: _byte_size,
+            token_estimate: None,
+        },
+    );
 }
 
 pub(crate) fn polarity_str(p: Polarity) -> &'static str {

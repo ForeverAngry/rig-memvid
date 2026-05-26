@@ -43,8 +43,8 @@ coordination lives in
 | `temporal` | no | Temporal track support via `memvid-core/temporal_track`. | not exercised by `just check` |
 | `encryption` | no | At-rest encryption via `memvid-core/encryption`. | not exercised by `just check` |
 | `compaction` | no | `MemvidDemotionHook` + `MemvidStoringCompactor` adapters onto `rig::memory::DemotionHook` / `rig::memory::Compactor`. Pulls `rig-memory = 0.1`. | clippy + tests with `--no-default-features --features "lex,compaction"` and via `--all-features` |
-| `context-projection` | no | Projects `MemvidStore` / `InMemoryStore` retrieval hits plus structured memory cards into `rig_compose::ContextItem`. Pulls `rig-compose = 0.3`. | clippy + tests with `--no-default-features --features "lex,context-projection"` and via `--all-features` |
-| `observe` | no | Emits `rig-tap` `ObservabilityEvent`s (`memory.frame_written`, `memory.demoted`, `context.compacted`) from `MemvidPersistHook`, `MemvidDemotionHook`, and `MemvidStoringCompactor`. Pulls `rig-tap = 0.1`. | covered by `--all-features` |
+| `context-projection` | no | Projects `MemvidStore` / `InMemoryStore` retrieval hits plus structured memory cards into `rig_compose::ContextItem`. Pulls `rig-compose = 0.4`. | clippy + tests with `--no-default-features --features "lex,context-projection"` and via `--all-features` |
+| `observe` | no | Emits `rig-tap` `ObservabilityEvent`s (`memory.frame_written`, `memory.demoted`, `context.compacted`, `context.sampled`) from `MemvidPersistHook`, `MemvidDemotionHook`, `MemvidStoringCompactor`, and `MemoryCardContext`. Pulls `rig-tap = 0.1`. | covered by `--all-features` |
 
 ## Key Types
 
@@ -280,21 +280,21 @@ CI mirrors the sibling-clone approach. This file pins the workflow once
 
 ## Ecosystem
 
-These companion crates are maintained as separate repositories. Together they form a small stack around the upstream Rig project: `rig-compose` provides the kernel surface, `rig-resources` contributes reusable skills and tools, `rig-mcp` moves tools across MCP, `rig-memvid` connects Rig agents to persistent `.mv2` memory, `rig-model-meta` abstracts LLM metadata and probes, and `rig-tap` defines the backend-agnostic `ObservabilityEvent` schema that `rig-memvid` emits from under the `observe` feature.
+These companion crates are maintained as separate repositories. Together they form a small stack around the upstream Rig project: `rig-compose` provides the kernel surface, `rig-resources` contributes reusable skills and tools, `rig-mcp` moves tools across MCP, `rig-memvid` connects Rig agents to persistent `.mv2` memory, `rig-model-catalog` abstracts LLM metadata and probes, and `rig-tap` defines the backend-agnostic `ObservabilityEvent` schema that `rig-memvid` emits from under the `observe` feature.
 
 ```mermaid
 flowchart TD
     rig["rig / rig-core"]
-    compose["rig-compose 0.3.x"]
+    compose["rig-compose 0.4.x"]
     resources["rig-resources 0.1.x"]
     mcp["rig-mcp 0.1.x"]
-    memvid["rig-memvid 0.1.x"]
-    model_meta["rig-model-meta 0.1.x"]
+    memvid["rig-memvid 0.2.x"]
+    model_meta["rig-model-catalog 0.1.x"]
     observe["rig-tap 0.1.x"]
 
     compose -. "Rig-shaped kernel; no direct rig-core dep" .-> rig
-    resources -- "rig-compose = 0.3; features: security, graph, full" --> compose
-    mcp -- "rig-compose = 0.3; rmcp stdio bridge" --> compose
+    resources -- "rig-compose = 0.4; features: security, graph, full" --> compose
+    mcp -- "rig-compose = 0.4; rmcp stdio bridge" --> compose
     memvid -- "rig-core (default-features = false); features: lex, simd, vec, api_embed, temporal, encryption, compaction, context-projection, observe" --> rig
     memvid -. "optional rig-tap = 0.1 via observe feature" .-> observe
     model_meta -. "optional rig-core via rig-hook" .-> rig
@@ -305,10 +305,10 @@ Pinned Rig-facing dependencies from the current manifests:
 | Crate | Direct Rig-facing dependency | Notes |
 | --- | --- | --- |
 | `rig-compose` | none | Defines a Rig-shaped kernel surface without depending on `rig-core`. |
-| `rig-resources` | `rig-compose = 0.3` | Provides reusable skills, resource tools, and security helpers. |
-| `rig-mcp` | `rig-compose = 0.3` | Bridges `rig-compose` tools over MCP stdio and loopback transports. |
-| `rig-memvid` | `rig-core = 0.37.0`; optional `rig-compose = 0.3`; optional `rig-tap = 0.1` | Implements Rig vector-store, prompt-hook, compaction, context-projection, and (under `observe`) observability-event emission over Memvid. |
-| `rig-model-meta` | optional `rig-core = 0.37` via `rig-hook` | Provides standalone model traits plus optional Rig prompt-hook telemetry. |
+| `rig-resources` | `rig-compose = 0.4` | Provides reusable skills, resource tools, and security helpers. |
+| `rig-mcp` | `rig-compose = 0.4` | Bridges `rig-compose` tools over MCP stdio and loopback transports. |
+| `rig-memvid` | `rig-core = 0.37.0`; optional `rig-compose = 0.4`; optional `rig-tap = 0.1` | Implements Rig vector-store, prompt-hook, compaction, context-projection, and (under `observe`) observability-event emission over Memvid. |
+| `rig-model-catalog` | optional `rig-core = 0.37` via `rig-hook` | Provides standalone model traits plus optional Rig prompt-hook telemetry. |
 | `rig-tap` | `rig-core = 0.37` | Defines the `ObservabilityEvent` schema, `TelemetryHook`, and `ObservedMemory` decorator that `rig-memvid` emits under the `observe` feature. |
 
 The concrete multi-crate workflow tested today is the MCP loopback path: a `rig_compose::ToolRegistry` is exposed through `rig_mcp::LoopbackTransport`, remote schemas are wrapped as `rig_mcp::McpTool`, and the wrapped tools are registered back into another `ToolRegistry`. That proves a local `rig-compose` tool and an MCP-adapted tool are indistinguishable to callers. The backing test is `mcp_tool_indistinguishable_from_local` in [rig-mcp/src/transport.rs](https://github.com/ForeverAngry/rig-mcp/blob/main/src/transport.rs).

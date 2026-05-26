@@ -18,20 +18,30 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
 - Logic Mesh graph-track pass-through for entity and relationship traversal.
 - Ollama and MLX examples that exercise live local-model memory behavior.
 - `DemotionHook` integration tracking upstream `rig-memory`: long-tail conversation turns can be demoted into `MemvidStore` as an optional adapter without making `rig-memvid` depend on `rig-memory` for default builds.
+- `MemoryCandidate` / `MemoryContextPack` over card-backed `ContextItem`s
+  with deterministic supersession by `version_key` + `effective_timestamp`
+  ([src/projection.rs](src/projection.rs)), plus `version_key`,
+  `effective_timestamp`, `event_date`, and `document_date` provenance on
+  card-derived items.
 
 ## Prototype Grade
 
-- Structured cards handle useful profile and relationship facts, but stale/conflict handling, supersession policy, archive tiers, and principal-bound recall policy need hardening.
+- Structured cards handle useful profile and relationship facts. Supersession by `version_key` collapses competing versions of the same fact today; stale/conflict surfacing across frames, archive tiers, and principal-bound recall policy still need hardening.
 - Live local-model examples exist, but they must pin intended models and fail loudly on fallback or drift.
 - Logic Mesh traversal is exposed, but graph-backed context planning and eval fixtures are still early.
 
 ## Next Work
 
-1. Land and stabilize `MemoryCandidate` / `MemoryContextPack` over frames, cards, summaries, graph expansions, and compaction outputs.
-2. Project memory candidates into `rig-compose` `ContextItem` with source kind, principal, timestamp, source URI, scope, confidence, supersession state, and retention tier.
-3. Add stale/conflict handling so old facts do not silently compete with newer facts as equal context.
+1. Extend `MemoryCandidate` / `MemoryContextPack` beyond cards to frames,
+   summaries, graph expansions, and compaction outputs, and surface the
+   superseded list to callers/eval harnesses.
+2. Tighten projected provenance with principal, scope, and retention tier
+   alongside the existing `version_key` / `effective_timestamp` /
+   `event_date` / `document_date` fields.
+3. Add stale/conflict surfacing so the host can explain a supersession
+   decision (or an unresolved conflict) end-to-end.
 4. Pin live Ollama examples to explicit models and fail loudly when the requested model is unavailable.
-5. Add eval fixtures that assert selected, omitted, compacted, and used memory. Drives an explicit dev-dependency on [`rig-evals-rag`](https://crates.io/crates/rig-evals-rag) once its retriever-evals harness lands.
+5. Add eval fixtures that assert selected, omitted, compacted, and used memory. Drives an explicit dev-dependency on [`rig-retrieval-evals`](https://crates.io/crates/rig-retrieval-evals) once its retriever-evals harness lands.
 6. Track upstream Rig compaction outputs and wire them into memory candidates once that surface settles.
 
 ## Maturity Bar
