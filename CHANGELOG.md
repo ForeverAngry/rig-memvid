@@ -38,6 +38,16 @@ All notable changes to `rig-memvid` will be documented in this file.
   `Commit` failures.
 - **`MemoryConfigBuilder`.** Fluent builder for every `MemoryConfig`
   field. Re-exported from the crate root.
+- Under the optional `context-projection` feature, `projection.rs` now
+  exposes `MemoryCandidate`, `MemoryContextPack`, `SupersededCandidate`,
+  and the `supersede` / `items_to_memory_candidates` helpers. The
+  pack collapses items sharing a `version_key` provenance field down
+  to the survivor with the highest `effective_timestamp`, breaks
+  ties by first-occurrence, and records the hidden candidates for
+  downstream auditing. Card-derived `ContextItem`s now carry
+  `version_key`, `effective_timestamp`, and optional `event_date` /
+  `document_date` in their provenance so the supersession layer can
+  operate without re-reading the underlying memvid archive.
 
 ### Changed
 
@@ -68,6 +78,10 @@ All notable changes to `rig-memvid` will be documented in this file.
   `MemvidDemotionHook::on_demote` after the batch commits. The feature
   is off by default — the standard build is byte-identical to the
   prior release.
+- Under the optional `observe` feature, `MemoryCardContext` now emits
+  `context.sampled` whenever card-backed dynamic context is queried. Existing
+  `memory.frame_written`, `memory.demoted`, and `context.compacted` emissions
+  are unchanged.
 - **`MemoryConfig::observe_conversation_id`.** New optional field
   carrying the conversation ID stamped on observe events emitted by
   `MemvidPersistHook`. Decouples telemetry correlation from memvid's

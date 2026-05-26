@@ -159,6 +159,27 @@ fn memory_card_provenance(card: &MemoryCard) -> Value {
     provenance.insert("source_uri".into(), json!(card.source_uri));
     provenance.insert("engine".into(), Value::String(card.engine.clone()));
     provenance.insert("confidence".into(), json!(card.confidence));
+    // Supersession-relevant fields. `version_key` groups two cards that
+    // describe the same fact across writes; `effective_timestamp` is the
+    // monotonic recency signal used to pick a survivor.
+    provenance.insert(
+        "version_key".into(),
+        Value::String(
+            card.version_key
+                .clone()
+                .unwrap_or_else(|| card.default_version_key()),
+        ),
+    );
+    provenance.insert(
+        "effective_timestamp".into(),
+        json!(card.effective_timestamp()),
+    );
+    if let Some(event_date) = card.event_date {
+        provenance.insert("event_date".into(), json!(event_date));
+    }
+    if let Some(document_date) = card.document_date {
+        provenance.insert("document_date".into(), json!(document_date));
+    }
     Value::Object(provenance)
 }
 
@@ -172,6 +193,11 @@ fn card_doc_provenance(doc: &CardDoc) -> Value {
         "polarity": polarity_value(doc.polarity.clone()),
         "source_frame_id": doc.source_frame_id,
         "confidence": doc.confidence,
+        // CardDoc lacks explicit version/event timestamps; default the
+        // supersession key to entity:slot and use source_frame_id as the
+        // monotonic recency proxy (memvid frames are append-only).
+        "version_key": format!("{}:{}", doc.entity, doc.slot),
+        "effective_timestamp": doc.source_frame_id,
     })
 }
 
@@ -272,6 +298,238 @@ pub fn card_docs_to_context_items(docs: &[CardDoc]) -> Vec<ContextItem> {
         .enumerate()
         .map(|(rank, doc)| doc.to_context_item(rank))
         .collect()
+}
+
+// ── Memory candidates + supersession ────────────────────────────────────────
+
+/// Typed wrapper around a memory-sourced [`ContextItem`].
+///
+/// Projections in this module emit `ContextItem`s with
+/// [`ContextSourceKind::Memory`]; wrapping them as `MemoryCandidate`
+/// records that fact in the type system and exposes accessors for the
+/// supersession-relevant provenance fields (`version_key`,
+/// `effective_timestamp`, `source_frame_id`).
+///
+/// Build candidates via [`MemoryCandidate::from_item`] or the bulk
+/// conversion in [`MemoryContextPack::from_candidates`] / the projection
+/// helpers in this module.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryCandidate {
+    item: ContextItem,
+}
+
+impl MemoryCandidate {
+    /// Wrap an existing context item as a memory candidate.
+    ///
+    /// Callers are responsible for ensuring `item.source` is
+    /// [`ContextSourceKind::Memory`]; the wrapper does not re-tag the
+    /// underlying item.
+    #[must_use]
+    pub fn from_item(item: ContextItem) -> Self {
+        Self { item }
+    }
+
+    /// Borrow the underlying context item.
+    #[must_use]
+    pub fn as_item(&self) -> &ContextItem {
+        &self.item
+    }
+
+    /// Consume the wrapper and return the inner context item.
+    #[must_use]
+    pub fn into_item(self) -> ContextItem {
+        self.item
+    }
+
+    /// Supersession-grouping key as emitted by this module's projection
+    /// functions, or `None` if the candidate carries no version key.
+    /// Candidates without a key never supersede or are superseded by
+    /// any other candidate.
+    #[must_use]
+    pub fn version_key(&self) -> Option<&str> {
+        self.item
+            .provenance
+            .as_object()
+            .and_then(|map| map.get("version_key"))
+            .and_then(Value::as_str)
+    }
+
+    /// Monotonic recency used to choose a survivor inside a
+    /// supersession group. Resolved in priority order from
+    /// `provenance.effective_timestamp` then `provenance.source_frame_id`.
+    /// Returns `None` if neither is present, in which case the
+    /// algorithm falls back to first-occurrence order.
+    #[must_use]
+    pub fn recency(&self) -> Option<i64> {
+        let map = self.item.provenance.as_object()?;
+        if let Some(v) = map.get("effective_timestamp").and_then(Value::as_i64) {
+            return Some(v);
+        }
+        // `source_frame_id` is unsigned in memvid; clamp to i64 range.
+        map.get("source_frame_id")
+            .and_then(Value::as_u64)
+            .map(|v| i64::try_from(v).unwrap_or(i64::MAX))
+    }
+}
+
+impl From<MemoryCandidate> for ContextItem {
+    fn from(candidate: MemoryCandidate) -> Self {
+        candidate.into_item()
+    }
+}
+
+/// Record of one candidate hidden by a newer survivor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SupersededCandidate {
+    /// `source_id` of the surviving candidate that hides this one.
+    pub survivor_source_id: String,
+    /// `version_key` shared by survivor and hidden candidate.
+    pub version_key: String,
+    /// The hidden candidate.
+    pub hidden: MemoryCandidate,
+}
+
+/// Result of running [`MemoryContextPack::from_candidates`] over a
+/// ranked list of [`MemoryCandidate`]s.
+///
+/// `kept` is the deduplicated set in deterministic input order:
+/// candidates without a `version_key` retain their original position;
+/// each group of candidates sharing a `version_key` is collapsed to the
+/// survivor (highest [`MemoryCandidate::recency`], ties broken by input
+/// order) emitted at the position of the group's first occurrence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryContextPack {
+    /// Candidates surviving supersession, in deterministic order.
+    pub kept: Vec<MemoryCandidate>,
+    /// Candidates hidden by a newer survivor.
+    pub superseded: Vec<SupersededCandidate>,
+}
+
+impl MemoryContextPack {
+    /// Apply supersession to `candidates` and return a deduplicated pack.
+    ///
+    /// Candidates without a `version_key` are always kept; candidates
+    /// with the same `version_key` collapse to one survivor (highest
+    /// `recency`, ties broken by lowest input index). Output order
+    /// preserves first-occurrence positions so downstream
+    /// [`rig_compose::ContextPack::pack`] sees the same surface even
+    /// when an older version of a card was ranked above its newer
+    /// replacement.
+    #[must_use]
+    pub fn from_candidates(candidates: Vec<MemoryCandidate>) -> Self {
+        use std::collections::HashMap;
+        use std::collections::hash_map::Entry;
+
+        // Track per-group state by version_key. `first_idx` fixes the
+        // output position; `survivor_idx` may be updated as we walk.
+        struct GroupState {
+            first_idx: usize,
+            survivor_idx: usize,
+            survivor_recency: Option<i64>,
+            members: Vec<usize>,
+        }
+        let mut groups: HashMap<String, GroupState> = HashMap::new();
+        for (idx, candidate) in candidates.iter().enumerate() {
+            match candidate.version_key() {
+                None => {}
+                Some(key) => match groups.entry(key.to_string()) {
+                    Entry::Vacant(slot) => {
+                        let recency = candidate.recency();
+                        slot.insert(GroupState {
+                            first_idx: idx,
+                            survivor_idx: idx,
+                            survivor_recency: recency,
+                            members: vec![idx],
+                        });
+                    }
+                    Entry::Occupied(mut slot) => {
+                        let g = slot.get_mut();
+                        g.members.push(idx);
+                        let new_recency = candidate.recency();
+                        // Strictly greater recency wins; ties are kept
+                        // by first-occurrence (i.e. we do not update).
+                        let should_replace = match (new_recency, g.survivor_recency) {
+                            (Some(n), Some(s)) => n > s,
+                            (Some(_), None) => true,
+                            (None, _) => false,
+                        };
+                        if should_replace {
+                            g.survivor_idx = idx;
+                            g.survivor_recency = new_recency;
+                        }
+                    }
+                },
+            }
+        }
+
+        // Build output in input-position order: at each position, emit
+        // either the no-key candidate or the group survivor (only at
+        // the group's first occurrence).
+        let mut kept: Vec<MemoryCandidate> = Vec::new();
+        let mut superseded: Vec<SupersededCandidate> = Vec::new();
+        let mut emitted_groups: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        for (idx, candidate) in candidates.iter().enumerate() {
+            match candidate.version_key() {
+                None => kept.push(candidate.clone()),
+                Some(key) => {
+                    if emitted_groups.contains(key) {
+                        continue;
+                    }
+                    let Some(group) = groups.get(key) else {
+                        continue;
+                    };
+                    if group.first_idx != idx {
+                        continue;
+                    }
+                    emitted_groups.insert(key.to_string());
+                    let Some(survivor) = candidates.get(group.survivor_idx) else {
+                        continue;
+                    };
+                    let survivor_source_id = survivor.as_item().source_id.clone();
+                    kept.push(survivor.clone());
+                    for &member_idx in &group.members {
+                        if member_idx == group.survivor_idx {
+                            continue;
+                        }
+                        let Some(hidden) = candidates.get(member_idx) else {
+                            continue;
+                        };
+                        superseded.push(SupersededCandidate {
+                            survivor_source_id: survivor_source_id.clone(),
+                            version_key: key.to_string(),
+                            hidden: hidden.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        Self { kept, superseded }
+    }
+
+    /// Convert the kept candidates into a `Vec<ContextItem>` ready for
+    /// [`rig_compose::ContextPack::pack`].
+    #[must_use]
+    pub fn into_context_items(self) -> Vec<ContextItem> {
+        self.kept
+            .into_iter()
+            .map(MemoryCandidate::into_item)
+            .collect()
+    }
+}
+
+/// Convenience: wrap owned context items as memory candidates.
+#[must_use]
+pub fn items_to_memory_candidates(items: Vec<ContextItem>) -> Vec<MemoryCandidate> {
+    items.into_iter().map(MemoryCandidate::from_item).collect()
+}
+
+/// Convenience: run supersession over a `Vec<ContextItem>` directly.
+#[must_use]
+pub fn supersede(items: Vec<ContextItem>) -> MemoryContextPack {
+    MemoryContextPack::from_candidates(items_to_memory_candidates(items))
 }
 
 #[cfg(test)]
@@ -494,5 +752,178 @@ mod tests {
         assert_eq!(pack.omitted[0].reason, ContextOmissionReason::OverBudget);
         let provenance = pack.selected[0].provenance.as_object().unwrap();
         assert_eq!(provenance["resource"], "memvid.card");
+    }
+
+    // ── Supersession tests ──────────────────────────────────────────────
+
+    fn card_with(
+        id: u64,
+        entity: &str,
+        slot: &str,
+        version_key: Option<&str>,
+        source_frame_id: u64,
+        event_date: Option<i64>,
+    ) -> MemoryCard {
+        MemoryCard {
+            id,
+            kind: MemoryKind::Preference,
+            entity: entity.into(),
+            slot: slot.into(),
+            value: "v".into(),
+            polarity: None,
+            event_date,
+            document_date: None,
+            version_key: version_key.map(str::to_string),
+            version_relation: VersionRelation::Updates,
+            source_frame_id,
+            source_uri: None,
+            source_offset: None,
+            engine: "test".into(),
+            engine_version: "1".into(),
+            confidence: None,
+            // `effective_timestamp` falls back to created_at when no
+            // event/document_date is set, so align it with the frame
+            // so newer-frame cards naturally rank as newer recency.
+            created_at: source_frame_id.try_into().unwrap_or(i64::MAX),
+        }
+    }
+
+    #[test]
+    fn supersede_keeps_all_items_when_none_carry_version_key() {
+        // Search hits never carry version_key → no supersession occurs.
+        let items =
+            search_hits_to_context_items(&[make_hit(0, Some(0.9), 1), make_hit(1, Some(0.4), 2)]);
+        let pack = supersede(items.clone());
+        assert_eq!(pack.kept.len(), 2);
+        assert!(pack.superseded.is_empty());
+        let kept_items = pack.into_context_items();
+        assert_eq!(kept_items[0].source_id, items[0].source_id);
+        assert_eq!(kept_items[1].source_id, items[1].source_id);
+    }
+
+    #[test]
+    fn supersede_collapses_same_version_key_picking_newest_frame() {
+        // Older card (lower frame_id, no event_date) ranked first;
+        // newer card same version_key ranked second. Newer must win.
+        let older = card_with(1, "Ada", "drink", Some("Ada:drink"), 10, None);
+        let newer = card_with(2, "Ada", "drink", Some("Ada:drink"), 25, None);
+        let cards = vec![older, newer];
+        let items = memory_cards_to_context_items(&cards);
+        let pack = supersede(items);
+        assert_eq!(pack.kept.len(), 1);
+        assert_eq!(pack.superseded.len(), 1);
+        assert_eq!(pack.kept[0].as_item().source_id, "card/2");
+        assert_eq!(pack.superseded[0].survivor_source_id, "card/2");
+        assert_eq!(pack.superseded[0].version_key, "Ada:drink");
+        assert_eq!(pack.superseded[0].hidden.as_item().source_id, "card/1");
+    }
+
+    #[test]
+    fn supersede_emits_survivor_at_first_occurrence_position() {
+        // Mix: hit (no key), older card (key), unrelated hit (no key),
+        // newer card (same key). Output order should be:
+        //   [hit#0, newer-card, hit#1]  — newer card emitted at the
+        // position of the older card's first occurrence.
+        let hit0_items = search_hits_to_context_items(&[make_hit(0, Some(0.9), 100)]);
+        let cards_old = memory_cards_to_context_items(&[card_with(
+            1,
+            "Ada",
+            "drink",
+            Some("Ada:drink"),
+            10,
+            None,
+        )]);
+        let hit1_items = search_hits_to_context_items(&[make_hit(0, Some(0.4), 200)]);
+        let cards_new = memory_cards_to_context_items(&[card_with(
+            2,
+            "Ada",
+            "drink",
+            Some("Ada:drink"),
+            25,
+            None,
+        )]);
+        let mut items = Vec::new();
+        items.extend(hit0_items);
+        items.extend(cards_old);
+        items.extend(hit1_items);
+        items.extend(cards_new);
+
+        let pack = supersede(items);
+        assert_eq!(pack.kept.len(), 3);
+        assert_eq!(pack.kept[0].as_item().source_id, "100");
+        assert_eq!(pack.kept[1].as_item().source_id, "card/2");
+        assert_eq!(pack.kept[2].as_item().source_id, "200");
+        assert_eq!(pack.superseded.len(), 1);
+        assert_eq!(pack.superseded[0].hidden.as_item().source_id, "card/1");
+    }
+
+    #[test]
+    fn supersede_breaks_recency_ties_by_first_occurrence() {
+        // Two cards same version_key, same effective_timestamp (both
+        // event_date=None, same source_frame_id). Earlier wins.
+        let first = card_with(1, "Bob", "city", Some("Bob:city"), 5, None);
+        let second = card_with(2, "Bob", "city", Some("Bob:city"), 5, None);
+        let items = memory_cards_to_context_items(&[first, second]);
+        let pack = supersede(items);
+        assert_eq!(pack.kept.len(), 1);
+        assert_eq!(pack.kept[0].as_item().source_id, "card/1");
+        assert_eq!(pack.superseded.len(), 1);
+        assert_eq!(pack.superseded[0].hidden.as_item().source_id, "card/2");
+    }
+
+    #[test]
+    fn supersede_uses_event_date_when_available() {
+        // Same version_key but the older-frame card has a newer
+        // event_date → event_date wins because effective_timestamp
+        // prefers event_date over document_date.
+        let recent_frame_old_event = card_with(
+            1,
+            "Cleo",
+            "role",
+            Some("Cleo:role"),
+            /* source_frame_id */ 50,
+            Some(100),
+        );
+        let old_frame_recent_event = card_with(
+            2,
+            "Cleo",
+            "role",
+            Some("Cleo:role"),
+            /* source_frame_id */ 10,
+            Some(500),
+        );
+        let items =
+            memory_cards_to_context_items(&[recent_frame_old_event, old_frame_recent_event]);
+        let pack = supersede(items);
+        assert_eq!(pack.kept.len(), 1);
+        assert_eq!(pack.kept[0].as_item().source_id, "card/2");
+    }
+
+    #[test]
+    fn supersede_handles_groups_independently() {
+        let a_old = card_with(1, "Ada", "drink", Some("Ada:drink"), 5, None);
+        let b_old = card_with(2, "Bob", "city", Some("Bob:city"), 8, None);
+        let a_new = card_with(3, "Ada", "drink", Some("Ada:drink"), 25, None);
+        let b_new = card_with(4, "Bob", "city", Some("Bob:city"), 30, None);
+        let items = memory_cards_to_context_items(&[a_old, b_old, a_new, b_new]);
+        let pack = supersede(items);
+        assert_eq!(pack.kept.len(), 2);
+        assert_eq!(pack.kept[0].as_item().source_id, "card/3"); // Ada survivor at Ada's first pos
+        assert_eq!(pack.kept[1].as_item().source_id, "card/4"); // Bob survivor at Bob's first pos
+        assert_eq!(pack.superseded.len(), 2);
+    }
+
+    #[test]
+    fn memory_candidate_exposes_version_key_and_recency() {
+        let card = card_with(1, "Ada", "drink", Some("Ada:drink"), 42, Some(900));
+        let item = card.to_context_item(0);
+        let candidate = MemoryCandidate::from_item(item);
+        assert_eq!(candidate.version_key(), Some("Ada:drink"));
+        assert_eq!(candidate.recency(), Some(900));
+
+        // SearchHit-projected items have no version_key → None.
+        let hit_item = make_hit(0, Some(0.5), 7).to_context_item(0);
+        let hit_candidate = MemoryCandidate::from_item(hit_item);
+        assert_eq!(hit_candidate.version_key(), None);
     }
 }
