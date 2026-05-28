@@ -26,7 +26,7 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 - Upstream dependency versions are single-sourced in [Cargo.toml](Cargo.toml); the badges above link to crates.io for the current pinned versions of `rig-core` (renamed to `rig` so the historic `use rig::...` paths still work) and `memvid-core`. Both are pulled with `default-features = false`.
 - Runtime stance: runtime-agnostic library; `tokio` is only a dev-dependency for tests and examples.
 - Platform stance: not supported on `wasm` targets because `memvid-core` requires synchronous file I/O and OS-level file locking.
-- Current Unreleased work restores memvid's default SIMD distance kernels through a new default `simd` feature, adds structured-memory card/context surfaces, principal-aware persistence, Logic Mesh pass-through, and local-model memory examples.
+- Current Unreleased work restores memvid's default SIMD distance kernels through a new default `simd` feature, adds structured-memory card/context surfaces, principal-aware persistence, Logic Mesh pass-through, shared context-projection provenance, and local-model memory examples.
 
 The crate-local maturity plan lives in [ROADMAP.md](ROADMAP.md). Cross-crate
 coordination lives in
@@ -203,6 +203,14 @@ project both episodic retrieval hits and structured memory cards into
 projection preserves compact card text, rank, confidence-or-fallback score,
 and provenance fields such as entity, slot, kind, polarity, source frame,
 source URI, engine, and schema version.
+
+Projected provenance also emits shared context keys aligned with the
+`rig-compose` context vocabulary: `source_uri`, `principal`,
+`recorded_at_millis`, `effective_at_millis`, `confidence`,
+`source_frame_id`, `version_key`, and `projection_state` where the underlying
+memvid source can supply them. Existing memvid-specific keys such as `frame_id`,
+`entity`, `slot`, `kind`, `polarity`, `engine`, and `effective_timestamp` remain
+in place for compatibility.
 
 ```rust,no_run
 use rig_compose::{ContextPack, ContextPackConfig};

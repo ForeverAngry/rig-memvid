@@ -6,6 +6,17 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Under the optional `context-projection` feature, retrieval hits,
+  in-memory hits, memory cards, and card docs now emit shared context
+  provenance keys (`source_uri`, `principal`, `recorded_at_millis`,
+  `effective_at_millis`, `confidence`, `source_frame_id`,
+  `projection_state`) alongside the existing memvid-specific provenance. This
+  keeps `MemoryCandidate` / `MemoryContextPack` compatible with the stabilized
+  `rig-compose` context vocabulary while preserving existing JSON keys such as
+  `frame_id`, `uri`, `entity`, `slot`, and `effective_timestamp`.
+
 ### Changed
 
 - Bump `memvid-core` from `2.0.139` to `2.0.140` to pick up the latest
