@@ -23,6 +23,15 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
   ([src/projection.rs](src/projection.rs)), plus `version_key`,
   `effective_timestamp`, `event_date`, and `document_date` provenance on
   card-derived items.
+- Frame-typed projection (`context-projection` + `compaction`):
+  `MemoryFrameRole`, `frame_role`, `typed_search_hit_to_context_item`,
+  `partition_search_hits_by_role`, and
+  `MemoryContextPack::from_search_hits` decode the
+  `MemvidFrameMetadata` envelope so demoted turns and compaction
+  summaries are first-class context candidates with role-specific
+  `source_id`s, principal/scope/dedup_key provenance, and a
+  role-aware `version_key` that collapses re-rolled summaries
+  deterministically.
 - Shared context-projection provenance keys for retrieval hits, in-memory
    hits, memory cards, and card docs: `source_uri`, `principal`,
    `recorded_at_millis`, `effective_at_millis`, `confidence`,
@@ -36,9 +45,12 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
 
 ## Next Work
 
-1. Extend `MemoryCandidate` / `MemoryContextPack` beyond cards to frames,
-   summaries, graph expansions, and compaction outputs, and surface the
-   superseded list to callers/eval harnesses.
+1. Extend the frame-typed projection further: graph expansions and
+   future compaction output shapes (now that demoted-message and
+   compaction-summary roles are wired, the remaining shapes are
+   graph traversal results from `MemoryGraph` and any new
+   `rig-memory` compaction output types). Surface the superseded list
+   in eval harnesses so they can attribute "hidden by" decisions.
 2. Add explicit scope and retention-tier provenance once the underlying memvid
    source records expose those concepts, complementing the principal,
    confidence, timestamp, and version fields already projected today.

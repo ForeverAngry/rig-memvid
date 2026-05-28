@@ -6,6 +6,36 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Frame-typed projection of `SearchHit`s under the combined
+  `context-projection` + `compaction` features:
+  - `MemoryFrameRole` enum (`Raw` / `DemotedMessage` / `CompactionSummary`)
+    with `as_str()` and `From<FrameKind>`.
+  - `frame_role(&SearchHit)` decoder that reads the
+    `MemvidFrameMetadata` envelope written by `MemvidDemotionHook` and
+    `MemvidStoringCompactor`.
+  - `typed_search_hit_to_context_item` / `typed_search_hits_to_context_items` /
+    `typed_search_hits_to_memory_candidates` projections that enrich
+    `ContextItem.provenance` with `frame_kind`, `conversation_id`,
+    `chat_role`, `principal`, `dedup_key`, optional `scope`,
+    `version_key`, and `effective_at_millis`; they use role-specific
+    `source_id`s (`summary/{frame_id}`, `frame/{frame_id}`) so a raw
+    demoted turn and a later compaction summary covering the same range
+    no longer collide.
+  - `PartitionedHits` + `partition_search_hits_by_role` for splitting
+    a result slice into raw / demoted / summary buckets that can be
+    re-ranked or budgeted independently.
+  - `MemoryContextPack::from_search_hits` convenience entry point that
+    runs the typed projection through deterministic supersession —
+    re-rolled summaries with the same `dedup_key` now collapse to the
+    higher-frame-id survivor while raw frames and summaries that
+    happen to share a key never collide because the role is part of
+    the `version_key`.
+- Hits without a `MemvidFrameMetadata` envelope continue to project
+  through the existing untyped path; the new helpers fall back to
+  `search_hits_to_context_items` behaviour for those.
+
 ## [0.2.1](https://github.com/ForeverAngry/rig-memvid/compare/v0.2.0...v0.2.1) - 2026-05-28
 
 ### Added
