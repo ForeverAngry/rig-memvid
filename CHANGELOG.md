@@ -6,6 +6,8 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.1](https://github.com/ForeverAngry/rig-memvid/compare/v0.2.0...v0.2.1) - 2026-05-28
+
 ### Added
 
 - Under the optional `context-projection` feature, retrieval hits,
