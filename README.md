@@ -236,6 +236,16 @@ memvid source can supply them. Existing memvid-specific keys such as `frame_id`,
 `entity`, `slot`, `kind`, `polarity`, `engine`, and `effective_timestamp` remain
 in place for compatibility.
 
+When `context-projection` is combined with `compaction`, search hits written by
+`MemvidDemotionHook` or `MemvidStoringCompactor` can be projected through
+`MemoryContextPack::from_search_hits`. That path decodes the typed frame
+envelope, separates demoted messages from compaction summaries, and adds
+frame-specific provenance such as `frame_kind`, `conversation_id`, `chat_role`,
+`dedup_key`, `scope`, `scope_uri`, and `scope_path`. If a future source emits
+retention metadata in `SearchHitMetadata.extra_metadata`, the projection also
+normalises `retention_tier` / `retention_class` and `retention_policy` /
+`retention` into `retention_tier` and `retention_policy`.
+
 ```rust,no_run
 use rig_compose::{ContextPack, ContextPackConfig};
 use rig_memvid::projection::memory_cards_to_context_items;

@@ -592,6 +592,9 @@ mod frame_typed {
     };
     use crate::metadata::{FrameKind, MemvidFrameMetadata};
 
+    const RETENTION_TIER_KEYS: &[&str] = &["retention_tier", "retention_class"];
+    const RETENTION_POLICY_KEYS: &[&str] = &["retention_policy", "retention"];
+
     /// Logical role of a memvid frame as recorded by the compaction
     /// envelope, or [`MemoryFrameRole::Raw`] when no envelope is present
     /// (e.g. ad-hoc `put_text` writes from outside the compaction path).
@@ -654,6 +657,8 @@ mod frame_typed {
     /// - `provenance.conversation_id`, `provenance.chat_role`,
     ///   `provenance.principal` (mirror of `chat_role`),
     ///   `provenance.dedup_key`, optional `provenance.scope`,
+    ///   `provenance.scope_uri`, `provenance.scope_path`, and optional
+    ///   retention metadata when present in the hit's `extra_metadata`,
     /// - `provenance.version_key`: stable supersession key derived from
     ///   the role + dedup hash (so re-rolled summaries collapse),
     /// - `provenance.effective_at_millis`: the frame id (memvid frames
@@ -754,8 +759,9 @@ mod frame_typed {
             Value::String(envelope.dedup_key.clone()),
         );
         if let Some(scope) = envelope.scope.as_ref() {
-            provenance.insert("scope".into(), Value::String(scope.clone()));
+            insert_scope_provenance(&mut provenance, scope);
         }
+        insert_retention_provenance(&mut provenance, hit);
         // Build a stable supersession key. Two writes of the same
         // dedup_key are content-identical by construction (blake3 over
         // the body); pinning the role keeps a raw frame from
@@ -768,6 +774,45 @@ mod frame_typed {
         provenance.insert("effective_at_millis".into(), json!(hit.frame_id));
         provenance.insert("effective_timestamp".into(), json!(hit.frame_id));
         Value::Object(provenance)
+    }
+
+    fn insert_scope_provenance(provenance: &mut Map<String, Value>, scope: &str) {
+        provenance.insert("scope".into(), Value::String(scope.to_string()));
+        provenance.insert("scope_uri".into(), Value::String(scope.to_string()));
+
+        let path = scope_path(scope);
+        if !path.is_empty() {
+            provenance.insert("scope_path".into(), json!(path));
+        }
+    }
+
+    fn scope_path(scope: &str) -> Vec<&str> {
+        scope
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .collect()
+    }
+
+    fn insert_retention_provenance(provenance: &mut Map<String, Value>, hit: &SearchHit) {
+        let Some(metadata) = hit.metadata.as_ref() else {
+            return;
+        };
+        if let Some(tier) = first_extra_metadata_value(metadata, RETENTION_TIER_KEYS) {
+            provenance.insert("retention_tier".into(), Value::String(tier.to_string()));
+        }
+        if let Some(policy) = first_extra_metadata_value(metadata, RETENTION_POLICY_KEYS) {
+            provenance.insert("retention_policy".into(), Value::String(policy.to_string()));
+        }
+    }
+
+    fn first_extra_metadata_value<'a>(
+        metadata: &'a memvid_core::SearchHitMetadata,
+        keys: &[&str],
+    ) -> Option<&'a str> {
+        keys.iter()
+            .filter_map(|key| metadata.extra_metadata.get(*key))
+            .map(String::as_str)
+            .find(|value| !value.is_empty())
     }
 
     /// Bulk variant of [`typed_search_hit_to_context_item`].
@@ -1341,6 +1386,8 @@ mod tests {
             assert_eq!(provenance["principal"], "assistant");
             assert_eq!(provenance["dedup_key"], "abc");
             assert_eq!(provenance["scope"], "project-x");
+            assert_eq!(provenance["scope_uri"], "project-x");
+            assert_eq!(provenance["scope_path"], json!(["project-x"]));
             assert_eq!(provenance["version_key"], "compaction_summary:abc");
             assert_eq!(provenance["effective_at_millis"], 42);
             assert_eq!(provenance["projection_state"], "candidate");
@@ -1357,6 +1404,61 @@ mod tests {
             assert_eq!(provenance["resource"], "memvid.frame");
             assert_eq!(provenance["frame_kind"], "demoted_message");
             assert_eq!(provenance["version_key"], "demoted_message:xyz");
+        }
+
+        #[test]
+        fn typed_item_projects_scope_path_and_retention_metadata() {
+            let mut summary = typed_hit(
+                0,
+                Some(0.9),
+                42,
+                Some(MemvidFrameMetadata {
+                    scope: Some("tenant-a/workspace-b/profile-c".into()),
+                    ..envelope(FrameKind::CompactionSummary, "abc", "assistant")
+                }),
+            );
+            let metadata = summary.metadata.as_mut().unwrap();
+            metadata
+                .extra_metadata
+                .insert("retention_tier".into(), "warm".into());
+            metadata
+                .extra_metadata
+                .insert("retention_policy".into(), "retain-90d".into());
+
+            let item = typed_search_hit_to_context_item(&summary, 0);
+            let provenance = item.provenance.as_object().unwrap();
+
+            assert_eq!(provenance["scope"], "tenant-a/workspace-b/profile-c");
+            assert_eq!(provenance["scope_uri"], "tenant-a/workspace-b/profile-c");
+            assert_eq!(
+                provenance["scope_path"],
+                json!(["tenant-a", "workspace-b", "profile-c"])
+            );
+            assert_eq!(provenance["retention_tier"], "warm");
+            assert_eq!(provenance["retention_policy"], "retain-90d");
+        }
+
+        #[test]
+        fn typed_item_uses_retention_aliases_when_primary_keys_absent() {
+            let mut summary = typed_hit(
+                0,
+                Some(0.9),
+                42,
+                Some(envelope(FrameKind::CompactionSummary, "abc", "assistant")),
+            );
+            let metadata = summary.metadata.as_mut().unwrap();
+            metadata
+                .extra_metadata
+                .insert("retention_class".into(), "cold".into());
+            metadata
+                .extra_metadata
+                .insert("retention".into(), "archive".into());
+
+            let item = typed_search_hit_to_context_item(&summary, 0);
+            let provenance = item.provenance.as_object().unwrap();
+
+            assert_eq!(provenance["retention_tier"], "cold");
+            assert_eq!(provenance["retention_policy"], "archive");
         }
 
         #[test]
