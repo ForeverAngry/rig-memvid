@@ -6,6 +6,11 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `memvid-core` from `2.0.139` to `2.0.140` to pick up the latest
+  upstream bug fixes.
+
 ## [0.2.0] - 2026-05-19
 
 ### Breaking
