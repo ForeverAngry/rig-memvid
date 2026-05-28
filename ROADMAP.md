@@ -23,10 +23,14 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
   ([src/projection.rs](src/projection.rs)), plus `version_key`,
   `effective_timestamp`, `event_date`, and `document_date` provenance on
   card-derived items.
+- Shared context-projection provenance keys for retrieval hits, in-memory
+   hits, memory cards, and card docs: `source_uri`, `principal`,
+   `recorded_at_millis`, `effective_at_millis`, `confidence`,
+   `source_frame_id`, `version_key`, and `projection_state` where available.
 
 ## Prototype Grade
 
-- Structured cards handle useful profile and relationship facts. Supersession by `version_key` collapses competing versions of the same fact today; stale/conflict surfacing across frames, archive tiers, and principal-bound recall policy still need hardening.
+- Structured cards handle useful profile and relationship facts. Supersession by `version_key` collapses competing versions of the same fact today; stale/conflict surfacing across frames, archive tiers, and unresolved principal-bound recall policy still need hardening.
 - Live local-model examples exist, but they must pin intended models and fail loudly on fallback or drift.
 - Logic Mesh traversal is exposed, but graph-backed context planning and eval fixtures are still early.
 
@@ -35,9 +39,9 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
 1. Extend `MemoryCandidate` / `MemoryContextPack` beyond cards to frames,
    summaries, graph expansions, and compaction outputs, and surface the
    superseded list to callers/eval harnesses.
-2. Tighten projected provenance with principal, scope, and retention tier
-   alongside the existing `version_key` / `effective_timestamp` /
-   `event_date` / `document_date` fields.
+2. Add explicit scope and retention-tier provenance once the underlying memvid
+   source records expose those concepts, complementing the principal,
+   confidence, timestamp, and version fields already projected today.
 3. Add stale/conflict surfacing so the host can explain a supersession
    decision (or an unresolved conflict) end-to-end.
 4. Pin live Ollama examples to explicit models and fail loudly when the requested model is unavailable.
