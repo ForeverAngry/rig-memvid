@@ -6,7 +6,7 @@ Memvid-backed persistent memory and lexical store for Rig agents.
 [![docs.rs](https://img.shields.io/docsrs/rig-memvid)](https://docs.rs/rig-memvid)
 [![license](https://img.shields.io/crates/l/rig-memvid.svg)](LICENSE)
 [![rig-core](https://img.shields.io/badge/rig--core-0.37.0-blue)](https://crates.io/crates/rig-core)
-[![memvid-core](https://img.shields.io/badge/memvid--core-2.0.139-blue)](https://crates.io/crates/memvid-core)
+[![memvid-core](https://img.shields.io/badge/memvid--core-2.0.140-blue)](https://crates.io/crates/memvid-core)
 
 ## Overview
 
@@ -20,13 +20,21 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 ## Status
 
-- Crate version: `0.2.0`.
+- Crate version: `0.2.1`.
 - Rust edition: 2024.
 - MSRV: 1.89.
 - Upstream dependency versions are single-sourced in [Cargo.toml](Cargo.toml); the badges above link to crates.io for the current pinned versions of `rig-core` (renamed to `rig` so the historic `use rig::...` paths still work) and `memvid-core`. Both are pulled with `default-features = false`.
 - Runtime stance: runtime-agnostic library; `tokio` is only a dev-dependency for tests and examples.
 - Platform stance: not supported on `wasm` targets because `memvid-core` requires synchronous file I/O and OS-level file locking.
-- Current Unreleased work restores memvid's default SIMD distance kernels through a new default `simd` feature, adds structured-memory card/context surfaces, principal-aware persistence, Logic Mesh pass-through, shared context-projection provenance, and local-model memory examples.
+- `0.2.0` is a breaking release: write-failure handling is now opt-in through
+  `MemoryConfig::write_failure`, and `WriteFailureAction` / `WriteFailurePhase`
+  are `#[non_exhaustive]`, so exhaustive matches against earlier variants need
+  a wildcard arm. The 0.2.x line additionally shipped the default `simd`
+  feature, `MemoryConfigBuilder`, principal-aware persistence, structured
+  memory-card and context surfaces, Logic Mesh pass-through, shared
+  context-projection provenance keys, the `observe` feature, and local-model
+  memory examples. See [CHANGELOG.md](CHANGELOG.md) for the per-release
+  breakdown.
 
 The crate-local maturity plan lives in [ROADMAP.md](ROADMAP.md). Cross-crate
 coordination lives in
@@ -52,9 +60,25 @@ coordination lives in
 - [src/store.rs](src/store.rs): `MemvidStoreBuilder`, with file lifecycle methods, lexical enablement, snippet sizing, ACL context, read-only open, and vector embedder configuration when `vec` is enabled.
 - [src/store.rs](src/store.rs): `MemvidFilter`, a Rig `SearchFilter` adapter for `uri`, `scope`, `as_of_frame`, and `as_of_ts` predicates.
 - [src/hook.rs](src/hook.rs): `MemvidPersistHook<M>`, a Rig `PromptHook` implementation that writes user prompts and assistant responses into `MemvidStore`.
-- [src/hook.rs](src/hook.rs): `MemoryConfig`, `WritePolicy`, and `WriteTransform`, which control what gets persisted, commit cadence, default tags, and scope URI.
+- [src/hook.rs](src/hook.rs): `MemoryConfig`, `MemoryConfigBuilder`, `WritePolicy`, and `WriteTransform`, which control what gets persisted, commit cadence, default tags, scope URI, principal, structured-extraction toggles, and the optional `observe_conversation_id` correlator surfaced on emitted `memory.frame_written` events. Use `MemoryConfig::builder()` to thread these through fluently.
+- [src/hook.rs](src/hook.rs): `WriteFailure`, `WriteFailureAction`, `WriteFailurePhase`, and `WriteFailureCallback` for opt-in handling of persistence failures — default behavior is `WriteFailure::Warn`; switch to `Halt` to fail the turn, or install a `Custom` callback for per-phase telemetry. The `WriteFailure*` enums are `#[non_exhaustive]`.
 - [src/inmem.rs](src/inmem.rs): `Episode`, `InMemoryStore<E>`, `InMemoryHit<E>`, and `InMemoryError`, the no-disk deterministic lexical retrieval surface.
 - [src/error.rs](src/error.rs): `MemvidError`, the typed error surface for store, filter, lifecycle, and memvid failures.
+
+When the optional `observe` feature is enabled, `MemvidPersistHook`,
+`MemvidDemotionHook`, `MemvidStoringCompactor`, and the memory-card context
+sampler emit `rig_tap::ObservabilityEvent`s tagged with the following
+`EventKind` variants (recorded as the wire-shape event names noted in
+parentheses):
+
+- `EventKind::MemoryFrameWritten` (`memory.frame_written`) — per turn or
+  forced-commit write through `MemvidPersistHook` / direct frame writers.
+- `EventKind::MemoryDemoted` (`memory.demoted`) — demotion decisions from
+  `MemvidDemotionHook`.
+- `EventKind::ContextCompacted` (`context.compacted`) — compaction outcomes
+  from `MemvidStoringCompactor`.
+- `EventKind::ContextSampled` (`context.sampled`) — structured-memory card
+  sampling through `MemoryCardContext`.
 
 The crate re-exports `memvid_core` so callers can construct `PutOptions`, `AclContext`, and `SearchRequest` without adding a direct dependency.
 
@@ -66,7 +90,7 @@ It is community-maintained and not part of the upstream `rig` repository.
 
 ## Quick start
 
-Persistent store behavior is covered by [tests/smoke.rs](tests/smoke.rs) and [tests/integration.rs](tests/integration.rs). The examples [examples/chatbot_with_memory.rs](examples/chatbot_with_memory.rs), [examples/chatbot_with_memory_ollama.rs](examples/chatbot_with_memory_ollama.rs), [examples/inspect_memory.rs](examples/inspect_memory.rs), [examples/livetest_relationships.rs](examples/livetest_relationships.rs), and [examples/livetest_relationships_mlx.rs](examples/livetest_relationships_mlx.rs) show end-to-end archive usage.
+Persistent store behavior is covered by [tests/smoke.rs](tests/smoke.rs) and [tests/integration.rs](tests/integration.rs). The examples [examples/chatbot_with_memory.rs](examples/chatbot_with_memory.rs), [examples/chatbot_with_memory_ollama.rs](examples/chatbot_with_memory_ollama.rs), [examples/inspect_memory.rs](examples/inspect_memory.rs), [examples/livetest_relationships.rs](examples/livetest_relationships.rs), and [examples/livetest_relationships_mlx.rs](examples/livetest_relationships_mlx.rs) show end-to-end archive usage. Additional runnable artifacts — [examples/bench_vec_search.rs](examples/bench_vec_search.rs), [examples/harness_record.rs](examples/harness_record.rs), and [examples/mlx_tool_call_normalizer.rs](examples/mlx_tool_call_normalizer.rs) — cover vector-search benchmarking, a tool-dispatch harness recorder, and provider-neutral tool-call normalization respectively.
 
 ```rust,no_run
 use memvid_core::PutOptions;
