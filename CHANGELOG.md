@@ -32,6 +32,13 @@ All notable changes to `rig-memvid` will be documented in this file.
     higher-frame-id survivor while raw frames and summaries that
     happen to share a key never collide because the role is part of
     the `version_key`.
+- Frame-typed projection now expands scoped frame metadata into
+  explicit `scope_uri` and hierarchical `scope_path` provenance while
+  preserving the existing `scope` key. It also forwards retention
+  metadata from `SearchHitMetadata.extra_metadata` when a source emits
+  `retention_tier` / `retention_class` or `retention_policy` /
+  `retention`, normalising those into `retention_tier` and
+  `retention_policy` provenance keys.
 - Hits without a `MemvidFrameMetadata` envelope continue to project
   through the existing untyped path; the new helpers fall back to
   `search_hits_to_context_items` behaviour for those.

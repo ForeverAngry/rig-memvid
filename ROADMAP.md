@@ -32,6 +32,10 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
   `source_id`s, principal/scope/dedup_key provenance, and a
   role-aware `version_key` that collapses re-rolled summaries
   deterministically.
+- Scope/retention projection for typed frames: scoped frame metadata now
+   emits `scope_uri` and `scope_path` alongside `scope`, and projection
+   forwards future source-emitted retention metadata into
+   `retention_tier` / `retention_policy` provenance keys.
 - Shared context-projection provenance keys for retrieval hits, in-memory
    hits, memory cards, and card docs: `source_uri`, `principal`,
    `recorded_at_millis`, `effective_at_millis`, `confidence`,
@@ -51,14 +55,11 @@ This roadmap is the crate-local operating plan for `rig-memvid`. The cross-crate
    graph traversal results from `MemoryGraph` and any new
    `rig-memory` compaction output types). Surface the superseded list
    in eval harnesses so they can attribute "hidden by" decisions.
-2. Add explicit scope and retention-tier provenance once the underlying memvid
-   source records expose those concepts, complementing the principal,
-   confidence, timestamp, and version fields already projected today.
-3. Add stale/conflict surfacing so the host can explain a supersession
+2. Add stale/conflict surfacing so the host can explain a supersession
    decision (or an unresolved conflict) end-to-end.
-4. Pin live Ollama examples to explicit models and fail loudly when the requested model is unavailable.
-5. Add eval fixtures that assert selected, omitted, compacted, and used memory. Drives an explicit dev-dependency on [`rig-retrieval-evals`](https://crates.io/crates/rig-retrieval-evals) once its retriever-evals harness lands.
-6. Track upstream Rig compaction outputs and wire them into memory candidates once that surface settles.
+3. Pin live Ollama examples to explicit models and fail loudly when the requested model is unavailable.
+4. Add eval fixtures that assert selected, omitted, compacted, and used memory. Drives an explicit dev-dependency on [`rig-retrieval-evals`](https://crates.io/crates/rig-retrieval-evals) once its retriever-evals harness lands.
+5. Track upstream Rig compaction outputs and wire them into memory candidates once that surface settles.
 
 ## Maturity Bar
 
