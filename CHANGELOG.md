@@ -6,6 +6,17 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.2](https://github.com/ForeverAngry/rig-memvid/compare/v0.2.1...v0.2.2) - 2026-05-28
+
+### Added
+
+- *(projection)* Add scope path and retention provenance ([#33](https://github.com/ForeverAngry/rig-memvid/pull/33))
+- *(projection)* Typed frame and summary projection for MemoryContextPack ([#32](https://github.com/ForeverAngry/rig-memvid/pull/32))
+
+### Documentation
+
+- Refresh README for shipped 0.2.x surface ([#30](https://github.com/ForeverAngry/rig-memvid/pull/30))
+
 ### Added
 
 - Frame-typed projection of `SearchHit`s under the combined
