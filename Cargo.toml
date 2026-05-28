@@ -33,17 +33,13 @@ futures = "0.3.32"
 blake3 = { version = "1", optional = true, default-features = false }
 # rig-compose `ContextItem` projection. Pulled only when the
 # `context-projection` feature is enabled so the default build stays
-# free of the rig-compose dep.
-#
-# NOTE: no `path = "..."` here on purpose. Sibling-folder development
-# overrides live in a top-level workspace `[patch.crates-io]`, not in
-# this published crate's `[dependencies]` — otherwise consumers outside
-# the umbrella workspace cannot build `--features context-projection`.
+# free of the rig-compose dep. No `path = "..."` here on purpose —
+# downstream consumers outside the umbrella workspace must be able to
+# build `--features context-projection` against the published crate.
 rig-compose = { version = "0.4", optional = true, default-features = false }
 # Structured observability event emission for the persist hook,
 # compactor, and demotion paths. Pulled only when the `observe`
-# feature is enabled. Same `[patch.crates-io]` note as `rig-compose`
-# above applies.
+# feature is enabled.
 rig-tap = { version = "0.1", optional = true }
 
 [dev-dependencies]
@@ -101,10 +97,10 @@ unwrap_used = "deny"
 lto = true
 opt-level = "s"
 
-# Local development overrides for sibling crates that may not yet be
-# published or whose latest unreleased work lives in adjacent folders.
-# `cargo publish` strips `[patch.*]` tables, so this is build-only and
-# does not affect what downstream consumers see on crates.io.
-[patch.crates-io]
-rig-compose = { path = "../rig-compose" }
-rig-tap = { path = "../rig-tap" }
+# NOTE: any sibling-folder development overrides
+# (e.g. `[patch.crates-io]` redirecting `rig-compose` / `rig-tap` to
+# `../rig-compose` and `../rig-tap`) belong in a developer-local
+# `.cargo/config.toml` or an out-of-tree workspace `Cargo.toml`. They
+# must not live in this published crate's manifest — release-plz runs
+# `cargo update` on a fresh checkout where the sibling paths do not
+# exist, which breaks release PR creation.
