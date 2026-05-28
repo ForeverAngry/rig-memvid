@@ -558,6 +558,284 @@ pub fn supersede(items: Vec<ContextItem>) -> MemoryContextPack {
     MemoryContextPack::from_candidates(items_to_memory_candidates(items))
 }
 
+// ── Frame-typed projection (compaction-aware) ───────────────────────────────
+
+#[cfg(feature = "compaction")]
+pub use frame_typed::{
+    MemoryFrameRole, PartitionedHits, frame_role, partition_search_hits_by_role,
+    typed_search_hit_to_context_item, typed_search_hits_to_context_items,
+    typed_search_hits_to_memory_candidates,
+};
+
+#[cfg(feature = "compaction")]
+mod frame_typed {
+    //! Role-aware projection for search hits whose frames carry a
+    //! [`MemvidFrameMetadata`](crate::metadata::MemvidFrameMetadata)
+    //! envelope.
+    //!
+    //! `rig-memvid`'s compaction surface
+    //! ([`crate::MemvidDemotionHook`], [`crate::MemvidStoringCompactor`])
+    //! tags every written frame with `kind ∈ {demoted_message,
+    //! compaction_summary}` plus `conversation_id`, `chat_role`,
+    //! `dedup_key`, and optional `scope`. These helpers decode that
+    //! envelope when present so downstream packers can distinguish
+    //! "raw demoted turn" from "rolled-up summary" without re-running
+    //! retrieval and so [`super::MemoryContextPack`] can supersede an
+    //! older summary by a newer one with the same dedup key.
+
+    use memvid_core::SearchHit;
+    use rig_compose::{ContextItem, ContextSourceKind};
+    use serde_json::{Map, Value, json};
+
+    use super::{
+        MemoryCandidate, STATE_CANDIDATE, fallback_score, search_hit_provenance, search_hit_score,
+    };
+    use crate::metadata::{FrameKind, MemvidFrameMetadata};
+
+    /// Logical role of a memvid frame as recorded by the compaction
+    /// envelope, or [`MemoryFrameRole::Raw`] when no envelope is present
+    /// (e.g. ad-hoc `put_text` writes from outside the compaction path).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub enum MemoryFrameRole {
+        /// Frame without a `MemvidFrameMetadata` envelope.
+        Raw,
+        /// A single user/assistant turn evicted from the working set.
+        DemotedMessage,
+        /// A rolled-up summary of multiple evicted turns.
+        CompactionSummary,
+    }
+
+    impl MemoryFrameRole {
+        /// Snake-case discriminant suitable for provenance JSON.
+        #[must_use]
+        pub fn as_str(self) -> &'static str {
+            match self {
+                Self::Raw => "raw",
+                Self::DemotedMessage => "demoted_message",
+                Self::CompactionSummary => "compaction_summary",
+            }
+        }
+    }
+
+    impl From<FrameKind> for MemoryFrameRole {
+        fn from(kind: FrameKind) -> Self {
+            match kind {
+                FrameKind::DemotedMessage => Self::DemotedMessage,
+                FrameKind::CompactionSummary => Self::CompactionSummary,
+            }
+        }
+    }
+
+    /// Decode the [`MemvidFrameMetadata`] envelope attached to `hit`,
+    /// returning [`MemoryFrameRole::Raw`] when the envelope is missing
+    /// or fails to parse.
+    #[must_use]
+    pub fn frame_role(hit: &SearchHit) -> MemoryFrameRole {
+        decode_envelope(hit)
+            .map(|env| env.kind.into())
+            .unwrap_or(MemoryFrameRole::Raw)
+    }
+
+    fn decode_envelope(hit: &SearchHit) -> Option<MemvidFrameMetadata> {
+        let metadata = hit.metadata.as_ref()?;
+        if metadata.extra_metadata.is_empty() {
+            return None;
+        }
+        MemvidFrameMetadata::try_from_map(&metadata.extra_metadata).ok()
+    }
+
+    /// Project a single [`SearchHit`] into a [`ContextItem`] enriched
+    /// with the frame-typed provenance keys.
+    ///
+    /// When the hit's `extra_metadata` decodes as
+    /// [`MemvidFrameMetadata`], the returned item carries:
+    /// - `provenance.frame_kind`: `demoted_message` | `compaction_summary`
+    /// - `provenance.conversation_id`, `provenance.chat_role`,
+    ///   `provenance.principal` (mirror of `chat_role`),
+    ///   `provenance.dedup_key`, optional `provenance.scope`,
+    /// - `provenance.version_key`: stable supersession key derived from
+    ///   the role + dedup hash (so re-rolled summaries collapse),
+    /// - `provenance.effective_at_millis`: the frame id (memvid frames
+    ///   are append-only, so frame id is a monotonic recency proxy).
+    ///
+    /// A role-aware `source_id` (`summary/{frame_id}` or
+    /// `frame/{frame_id}`) replaces the bare frame id so duplicate
+    /// `source_id`s do not collide between a raw and a summary view of
+    /// the same frame range.
+    ///
+    /// When the envelope is missing the function falls back to the
+    /// untyped projection used by [`super::search_hits_to_context_items`].
+    #[must_use]
+    pub fn typed_search_hit_to_context_item(hit: &SearchHit, rank: usize) -> ContextItem {
+        let Some(envelope) = decode_envelope(hit) else {
+            return ContextItem::new(
+                ContextSourceKind::Memory,
+                hit.frame_id.to_string(),
+                hit.text.clone(),
+            )
+            .with_rank(rank)
+            .with_score(search_hit_score(hit))
+            .with_provenance(search_hit_provenance(hit));
+        };
+
+        let role = MemoryFrameRole::from(envelope.kind);
+        let source_id = match role {
+            MemoryFrameRole::CompactionSummary => format!("summary/{}", hit.frame_id),
+            MemoryFrameRole::DemotedMessage => format!("frame/{}", hit.frame_id),
+            // Unreachable: `decode_envelope` only returns Some when the
+            // envelope decodes, and `FrameKind` has no `Raw` variant
+            // today. Kept as a safe fall-through if the enum grows.
+            MemoryFrameRole::Raw => hit.frame_id.to_string(),
+        };
+        let provenance = typed_provenance(hit, &envelope, role, rank);
+
+        ContextItem::new(ContextSourceKind::Memory, source_id, hit.text.clone())
+            .with_rank(rank)
+            .with_score(search_hit_score(hit))
+            .with_provenance(provenance)
+    }
+
+    fn typed_provenance(
+        hit: &SearchHit,
+        envelope: &MemvidFrameMetadata,
+        role: MemoryFrameRole,
+        rank: usize,
+    ) -> Value {
+        let mut provenance = Map::new();
+        provenance.insert("schema_version".into(), json!(1));
+        provenance.insert(
+            "resource".into(),
+            Value::String(match role {
+                MemoryFrameRole::CompactionSummary => "memvid.summary".into(),
+                MemoryFrameRole::DemotedMessage => "memvid.frame".into(),
+                MemoryFrameRole::Raw => "memvid.search".into(),
+            }),
+        );
+        provenance.insert("frame_kind".into(), Value::String(role.as_str().into()));
+        provenance.insert("frame_id".into(), Value::String(hit.frame_id.to_string()));
+        provenance.insert("source_frame_id".into(), json!(hit.frame_id));
+        provenance.insert("uri".into(), Value::String(hit.uri.clone()));
+        provenance.insert("source_uri".into(), Value::String(hit.uri.clone()));
+        provenance.insert("rank".into(), json!(rank));
+        provenance.insert("matches".into(), json!(hit.matches));
+        provenance.insert(
+            "projection_state".into(),
+            Value::String(STATE_CANDIDATE.into()),
+        );
+        let (range_start, range_end) = hit.range;
+        provenance.insert("range".into(), json!([range_start, range_end]));
+        let score = match hit.score {
+            Some(score) => f64::from(score),
+            None => fallback_score(rank),
+        };
+        provenance.insert("score".into(), json!(score));
+        provenance.insert("confidence".into(), json!(score));
+        if let Some(title) = hit.title.as_ref() {
+            provenance.insert("title".into(), Value::String(title.clone()));
+        }
+        provenance.insert(
+            "conversation_id".into(),
+            Value::String(envelope.conversation_id.clone()),
+        );
+        provenance.insert(
+            "chat_role".into(),
+            Value::String(envelope.chat_role.clone()),
+        );
+        // Mirror chat_role into the shared `principal` slot so packers
+        // that scope by principal (e.g. multi-tenant inspectors) see a
+        // value for compacted memory just like they do for cards.
+        provenance.insert(
+            "principal".into(),
+            Value::String(envelope.chat_role.clone()),
+        );
+        provenance.insert(
+            "dedup_key".into(),
+            Value::String(envelope.dedup_key.clone()),
+        );
+        if let Some(scope) = envelope.scope.as_ref() {
+            provenance.insert("scope".into(), Value::String(scope.clone()));
+        }
+        // Build a stable supersession key. Two writes of the same
+        // dedup_key are content-identical by construction (blake3 over
+        // the body); pinning the role keeps a raw frame from
+        // superseding its later summary or vice versa.
+        let version_key = format!("{}:{}", role.as_str(), envelope.dedup_key);
+        provenance.insert("version_key".into(), Value::String(version_key));
+        // Memvid frames are append-only, so `frame_id` is a monotonic
+        // recency proxy: a later write of the same dedup_key would
+        // land at a higher frame id and naturally win supersession.
+        provenance.insert("effective_at_millis".into(), json!(hit.frame_id));
+        provenance.insert("effective_timestamp".into(), json!(hit.frame_id));
+        Value::Object(provenance)
+    }
+
+    /// Bulk variant of [`typed_search_hit_to_context_item`].
+    #[must_use]
+    pub fn typed_search_hits_to_context_items(hits: &[SearchHit]) -> Vec<ContextItem> {
+        hits.iter()
+            .enumerate()
+            .map(|(rank, hit)| typed_search_hit_to_context_item(hit, rank))
+            .collect()
+    }
+
+    /// Bulk projection that wraps each typed item as a
+    /// [`MemoryCandidate`] ready for [`super::MemoryContextPack::from_candidates`].
+    #[must_use]
+    pub fn typed_search_hits_to_memory_candidates(hits: &[SearchHit]) -> Vec<MemoryCandidate> {
+        typed_search_hits_to_context_items(hits)
+            .into_iter()
+            .map(MemoryCandidate::from_item)
+            .collect()
+    }
+
+    /// Hits split by their decoded [`MemoryFrameRole`].
+    ///
+    /// Returned vectors preserve input order within each bucket so
+    /// callers can re-rank or budget each role independently before
+    /// re-merging.
+    #[derive(Debug, Clone, Default)]
+    pub struct PartitionedHits {
+        /// Hits whose envelope was missing or undecodable.
+        pub raw: Vec<SearchHit>,
+        /// Hits tagged [`crate::metadata::FrameKind::DemotedMessage`].
+        pub demoted: Vec<SearchHit>,
+        /// Hits tagged [`crate::metadata::FrameKind::CompactionSummary`].
+        pub summaries: Vec<SearchHit>,
+    }
+
+    /// Partition `hits` by [`MemoryFrameRole`].
+    #[must_use]
+    pub fn partition_search_hits_by_role(hits: &[SearchHit]) -> PartitionedHits {
+        let mut out = PartitionedHits::default();
+        for hit in hits {
+            match frame_role(hit) {
+                MemoryFrameRole::Raw => out.raw.push(hit.clone()),
+                MemoryFrameRole::DemotedMessage => out.demoted.push(hit.clone()),
+                MemoryFrameRole::CompactionSummary => out.summaries.push(hit.clone()),
+            }
+        }
+        out
+    }
+}
+
+#[cfg(feature = "compaction")]
+impl MemoryContextPack {
+    /// Project `hits` through [`typed_search_hits_to_memory_candidates`]
+    /// and apply supersession.
+    ///
+    /// This is the recommended entry point for callers that retrieve
+    /// from a compaction-backed `.mv2` archive: it preserves the order
+    /// of the underlying ranker, decodes the frame envelope, and
+    /// collapses any pair of hits that share a `(role, dedup_key)` —
+    /// keeping the higher-frame-id survivor — so a re-rolled summary
+    /// does not appear twice in the same pack.
+    #[must_use]
+    pub fn from_search_hits(hits: &[memvid_core::SearchHit]) -> Self {
+        Self::from_candidates(typed_search_hits_to_memory_candidates(hits))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 mod tests {
@@ -969,5 +1247,241 @@ mod tests {
         let hit_item = make_hit(0, Some(0.5), 7).to_context_item(0);
         let hit_candidate = MemoryCandidate::from_item(hit_item);
         assert_eq!(hit_candidate.version_key(), None);
+    }
+
+    // ── Frame-typed projection tests (compaction-aware) ─────────────────
+
+    #[cfg(feature = "compaction")]
+    mod typed {
+        use super::super::*;
+        use crate::metadata::{FrameKind, MemvidFrameMetadata};
+        use memvid_core::SearchHitMetadata;
+        use memvid_core::types::FrameId;
+
+        fn envelope(kind: FrameKind, dedup_key: &str, role: &str) -> MemvidFrameMetadata {
+            MemvidFrameMetadata {
+                schema_version: 1,
+                kind,
+                conversation_id: "conv-1".into(),
+                chat_role: role.into(),
+                dedup_key: dedup_key.into(),
+                scope: Some("project-x".into()),
+            }
+        }
+
+        fn typed_hit(
+            rank: usize,
+            score: Option<f32>,
+            frame: FrameId,
+            env: Option<MemvidFrameMetadata>,
+        ) -> SearchHit {
+            let metadata = env.map(|env| {
+                let extra = env.into_map();
+                SearchHitMetadata {
+                    extra_metadata: extra,
+                    ..SearchHitMetadata::default()
+                }
+            });
+            SearchHit {
+                rank,
+                frame_id: frame,
+                uri: format!("memvid://frame/{frame}"),
+                title: Some("frame".into()),
+                range: (0, 10),
+                text: "compacted body".into(),
+                matches: 1,
+                chunk_range: Some((0, 10)),
+                chunk_text: None,
+                score,
+                metadata,
+            }
+        }
+
+        #[test]
+        fn frame_role_defaults_to_raw_without_envelope() {
+            let hit = typed_hit(0, Some(0.5), 1, None);
+            assert_eq!(frame_role(&hit), MemoryFrameRole::Raw);
+        }
+
+        #[test]
+        fn frame_role_decodes_demoted_and_summary() {
+            let demoted = typed_hit(
+                0,
+                Some(0.4),
+                2,
+                Some(envelope(FrameKind::DemotedMessage, "k1", "user")),
+            );
+            assert_eq!(frame_role(&demoted), MemoryFrameRole::DemotedMessage);
+
+            let summary = typed_hit(
+                0,
+                Some(0.6),
+                3,
+                Some(envelope(FrameKind::CompactionSummary, "k2", "assistant")),
+            );
+            assert_eq!(frame_role(&summary), MemoryFrameRole::CompactionSummary);
+        }
+
+        #[test]
+        fn typed_item_uses_role_specific_source_id_and_provenance() {
+            let summary = typed_hit(
+                0,
+                Some(0.9),
+                42,
+                Some(envelope(FrameKind::CompactionSummary, "abc", "assistant")),
+            );
+            let item = typed_search_hit_to_context_item(&summary, 0);
+            assert!(matches!(item.source, ContextSourceKind::Memory));
+            assert_eq!(item.source_id, "summary/42");
+            let provenance = item.provenance.as_object().unwrap();
+            assert_eq!(provenance["resource"], "memvid.summary");
+            assert_eq!(provenance["frame_kind"], "compaction_summary");
+            assert_eq!(provenance["conversation_id"], "conv-1");
+            assert_eq!(provenance["chat_role"], "assistant");
+            assert_eq!(provenance["principal"], "assistant");
+            assert_eq!(provenance["dedup_key"], "abc");
+            assert_eq!(provenance["scope"], "project-x");
+            assert_eq!(provenance["version_key"], "compaction_summary:abc");
+            assert_eq!(provenance["effective_at_millis"], 42);
+            assert_eq!(provenance["projection_state"], "candidate");
+
+            let demoted = typed_hit(
+                0,
+                Some(0.3),
+                7,
+                Some(envelope(FrameKind::DemotedMessage, "xyz", "user")),
+            );
+            let item = typed_search_hit_to_context_item(&demoted, 0);
+            assert_eq!(item.source_id, "frame/7");
+            let provenance = item.provenance.as_object().unwrap();
+            assert_eq!(provenance["resource"], "memvid.frame");
+            assert_eq!(provenance["frame_kind"], "demoted_message");
+            assert_eq!(provenance["version_key"], "demoted_message:xyz");
+        }
+
+        #[test]
+        fn typed_item_falls_back_to_untyped_when_envelope_missing() {
+            let hit = typed_hit(0, Some(0.5), 9, None);
+            let item = typed_search_hit_to_context_item(&hit, 0);
+            assert_eq!(item.source_id, "9");
+            let provenance = item.provenance.as_object().unwrap();
+            assert_eq!(provenance["resource"], "memvid.search");
+            assert!(provenance.get("frame_kind").is_none());
+            assert!(provenance.get("version_key").is_none());
+        }
+
+        #[test]
+        fn partition_buckets_by_role_in_input_order() {
+            let hits = vec![
+                typed_hit(0, Some(0.9), 1, None),
+                typed_hit(
+                    1,
+                    Some(0.5),
+                    2,
+                    Some(envelope(FrameKind::DemotedMessage, "d", "user")),
+                ),
+                typed_hit(
+                    2,
+                    Some(0.4),
+                    3,
+                    Some(envelope(FrameKind::CompactionSummary, "s", "assistant")),
+                ),
+                typed_hit(3, Some(0.2), 4, None),
+            ];
+            let parts = partition_search_hits_by_role(&hits);
+            assert_eq!(parts.raw.len(), 2);
+            assert_eq!(parts.demoted.len(), 1);
+            assert_eq!(parts.summaries.len(), 1);
+            assert_eq!(parts.raw[0].frame_id, 1);
+            assert_eq!(parts.raw[1].frame_id, 4);
+            assert_eq!(parts.demoted[0].frame_id, 2);
+            assert_eq!(parts.summaries[0].frame_id, 3);
+        }
+
+        #[test]
+        fn summary_pack_collapses_resummarized_dedup_key_to_newest_frame() {
+            // Same dedup_key written twice (e.g. compactor re-rolled the
+            // same chunk) → newer frame must survive, older suppressed.
+            let older = typed_hit(
+                0,
+                Some(0.5),
+                10,
+                Some(envelope(
+                    FrameKind::CompactionSummary,
+                    "chunk-1",
+                    "assistant",
+                )),
+            );
+            let newer = typed_hit(
+                1,
+                Some(0.5),
+                25,
+                Some(envelope(
+                    FrameKind::CompactionSummary,
+                    "chunk-1",
+                    "assistant",
+                )),
+            );
+            let pack = MemoryContextPack::from_search_hits(&[older, newer]);
+            assert_eq!(pack.kept.len(), 1);
+            assert_eq!(pack.kept[0].as_item().source_id, "summary/25");
+            assert_eq!(pack.superseded.len(), 1);
+            assert_eq!(pack.superseded[0].version_key, "compaction_summary:chunk-1");
+            assert_eq!(pack.superseded[0].hidden.as_item().source_id, "summary/10");
+            assert_eq!(pack.superseded[0].survivor_source_id, "summary/25");
+        }
+
+        #[test]
+        fn raw_and_summary_with_same_dedup_key_do_not_collide() {
+            // A raw demoted_message and a compaction_summary that share
+            // a dedup_key (would be unusual but possible if the dedup
+            // hashes lined up) must NOT collapse — role is part of the
+            // supersession key.
+            let demoted = typed_hit(
+                0,
+                Some(0.4),
+                5,
+                Some(envelope(FrameKind::DemotedMessage, "shared", "user")),
+            );
+            let summary = typed_hit(
+                1,
+                Some(0.6),
+                6,
+                Some(envelope(
+                    FrameKind::CompactionSummary,
+                    "shared",
+                    "assistant",
+                )),
+            );
+            let pack = MemoryContextPack::from_search_hits(&[demoted, summary]);
+            assert_eq!(pack.kept.len(), 2);
+            assert_eq!(pack.kept[0].as_item().source_id, "frame/5");
+            assert_eq!(pack.kept[1].as_item().source_id, "summary/6");
+            assert!(pack.superseded.is_empty());
+        }
+
+        #[test]
+        fn typed_hits_to_candidates_preserves_input_order() {
+            let hits = vec![
+                typed_hit(
+                    0,
+                    Some(0.9),
+                    1,
+                    Some(envelope(FrameKind::DemotedMessage, "a", "user")),
+                ),
+                typed_hit(
+                    1,
+                    Some(0.5),
+                    2,
+                    Some(envelope(FrameKind::CompactionSummary, "b", "assistant")),
+                ),
+            ];
+            let candidates = typed_search_hits_to_memory_candidates(&hits);
+            assert_eq!(candidates.len(), 2);
+            assert_eq!(candidates[0].as_item().source_id, "frame/1");
+            assert_eq!(candidates[1].as_item().source_id, "summary/2");
+            assert_eq!(candidates[0].version_key(), Some("demoted_message:a"));
+            assert_eq!(candidates[1].version_key(), Some("compaction_summary:b"));
+        }
     }
 }

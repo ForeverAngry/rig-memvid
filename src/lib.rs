@@ -65,6 +65,16 @@ pub use projection::{
     card_docs_to_context_items, inmem_hits_to_context_items, items_to_memory_candidates,
     memory_cards_to_context_items, search_hits_to_context_items, supersede,
 };
+#[cfg(all(
+    not(target_family = "wasm"),
+    feature = "context-projection",
+    feature = "compaction"
+))]
+pub use projection::{
+    MemoryFrameRole, PartitionedHits, frame_role, partition_search_hits_by_role,
+    typed_search_hit_to_context_item, typed_search_hits_to_context_items,
+    typed_search_hits_to_memory_candidates,
+};
 #[cfg(not(target_family = "wasm"))]
 mod store;
 
