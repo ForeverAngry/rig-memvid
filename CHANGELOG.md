@@ -6,6 +6,14 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add compatibility tests for the `rig_memory_policy::inmem` re-export paths.
+
+### Documentation
+
+- Document the policy-crate migration path for `InMemoryStore` callers.
+
 ## [0.4.0](https://github.com/ForeverAngry/rig-memvid/compare/v0.3.0...v0.4.0) - 2026-05-29
 
 ### Added
