@@ -62,7 +62,7 @@ coordination lives in
 - [src/hook.rs](src/hook.rs): `MemvidPersistHook<M>`, a Rig `PromptHook` implementation that writes user prompts and assistant responses into `MemvidStore`.
 - [src/hook.rs](src/hook.rs): `MemoryConfig`, `MemoryConfigBuilder`, `WritePolicy`, and `WriteTransform`, which control what gets persisted, commit cadence, default tags, scope URI, principal, structured-extraction toggles, and the optional `observe_conversation_id` correlator surfaced on emitted `memory.frame_written` events. Use `MemoryConfig::builder()` to thread these through fluently.
 - [src/hook.rs](src/hook.rs): `WriteFailure`, `WriteFailureAction`, `WriteFailurePhase`, and `WriteFailureCallback` for opt-in handling of persistence failures — default behavior is `WriteFailure::Warn`; switch to `Halt` to fail the turn, or install a `Custom` callback for per-phase telemetry. The `WriteFailure*` enums are `#[non_exhaustive]`.
-- [src/inmem.rs](src/inmem.rs): `Episode`, `InMemoryStore<E>`, `InMemoryHit<E>`, and `InMemoryError`, the no-disk deterministic lexical retrieval surface.
+- [src/inmem.rs](src/inmem.rs): compatibility re-exports for `Episode`, `InMemoryStore<E>`, `InMemoryHit<E>`, and `InMemoryError` from `rig-memory-policy`, preserving the historic no-disk deterministic lexical retrieval surface.
 - [src/error.rs](src/error.rs): `MemvidError`, the typed error surface for store, filter, lifecycle, and memvid failures.
 
 When the optional `observe` feature is enabled, `MemvidPersistHook`,
@@ -304,7 +304,7 @@ Examples must also continue to build with `cargo build --examples`.
 - `MemvidStore::search` is the raw memvid path. Do not call it from inside a `WriteTransform`; hook writes already go through the same store and a re-entrant call can deadlock.
 - `MemvidFilter::gt`, `lt`, and `or` are rejected because they do not map onto memvid's query model.
 - The `vec` path only honors `MemvidFilter::scope`; `uri`, `as_of_frame`, and `as_of_ts` are unsupported on vector search.
-- `InMemoryStore` is deterministic and dependency-free, but it is lexical token overlap only, not semantic vector retrieval.
+- `InMemoryStore` is deterministic and implemented in `rig-memory-policy`, but it is lexical token overlap only, not semantic vector retrieval.
 - `rig-memvid` intentionally fails to compile on `wasm` targets with a clear message.
 
 ## Building from source
