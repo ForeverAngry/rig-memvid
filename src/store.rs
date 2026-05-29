@@ -15,6 +15,8 @@ use rig::{
     },
     wasm_compat::WasmCompatSend,
 };
+#[cfg(feature = "compaction")]
+use rig_memory_policy::{Committable, TextWriter};
 use serde::{Deserialize, Serialize};
 
 use crate::error::MemvidError;
@@ -375,6 +377,30 @@ impl MemvidStore {
     ) -> Result<Vec<memvid_core::FollowResult>, MemvidError> {
         let guard = self.lock()?;
         Ok(guard.follow(start, link_type, hops))
+    }
+}
+
+#[cfg(feature = "compaction")]
+impl TextWriter for MemvidStore {
+    type Options = PutOptions;
+    type Id = u64;
+    type Error = MemvidError;
+
+    async fn write_text(
+        &self,
+        text: &str,
+        options: Self::Options,
+    ) -> Result<Self::Id, Self::Error> {
+        self.put_text_uncommitted(text, options)
+    }
+}
+
+#[cfg(feature = "compaction")]
+impl Committable for MemvidStore {
+    type Error = MemvidError;
+
+    async fn commit(&self) -> Result<(), Self::Error> {
+        MemvidStore::commit(self)
     }
 }
 

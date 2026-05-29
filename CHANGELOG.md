@@ -6,6 +6,13 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- *(compaction)* Implement `rig_memory_policy::TextWriter` and
+  `rig_memory_policy::Committable` for `MemvidStore`, with the shared
+  compaction frame writer now generic over those backend-agnostic
+  capabilities (Phase 3 of [#28](https://github.com/ForeverAngry/rig-memvid/issues/28)).
+
 ### Changed
 
 - *(compaction)* Extract backend-agnostic content-hash dedup and frame-metadata
