@@ -157,7 +157,7 @@ impl MemvidDemotionHook {
         }
     }
 
-    fn write(&self, conversation_id: &str, msg: &Message) -> Result<(), MemoryError> {
+    async fn write(&self, conversation_id: &str, msg: &Message) -> Result<(), MemoryError> {
         let Some(text) = self.render(msg) else {
             return Ok(());
         };
@@ -170,6 +170,7 @@ impl MemvidDemotionHook {
             role_label(msg),
             &text,
         )
+        .await
         .map(|_| ())
     }
 }
@@ -185,9 +186,9 @@ impl DemotionHook for MemvidDemotionHook {
                 return Ok(());
             }
             for msg in &messages {
-                self.write(conversation_id, msg)?;
+                self.write(conversation_id, msg).await?;
             }
-            commit_if_each_turn(&self.store, &self.config)?;
+            commit_if_each_turn(&self.store, &self.config).await?;
             #[cfg(feature = "observe")]
             rig_tap::emit_kind(
                 conversation_id,

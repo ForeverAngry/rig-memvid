@@ -1,20 +1,21 @@
 //! Shared write path for the compaction integration.
 //!
 //! Both [`crate::MemvidDemotionHook`] and [`crate::MemvidStoringCompactor`]
-//! land single rendered chunks of text into a [`MemvidStore`] with the
-//! same metadata schema, the same content-hash dedup gate, and the same
-//! error-propagation contract. This module factors that path out so the
-//! two surfaces stay in lockstep.
+//! land single rendered chunks of text into any [`TextWriter`] +
+//! [`Committable`] backend that accepts [`PutOptions`]. They share the
+//! same metadata schema, content-hash dedup gate, and error-propagation
+//! contract. This module factors that path out so the two surfaces stay
+//! in lockstep.
 //!
 //! Gated on the `compaction` feature.
 
 use memvid_core::PutOptions;
 use rig::memory::MemoryError;
+use rig_memory_policy::{Committable, TextWriter};
 
 use crate::dedup::{DedupSet, compute_key, hex_encode_key};
 use crate::hook::MemoryConfig;
 use crate::metadata::{FrameKind, MemvidFrameMetadata};
-use crate::store::MemvidStore;
 
 /// Write a single rendered frame into `store`, gated by `dedup`.
 ///
@@ -27,15 +28,19 @@ use crate::store::MemvidStore;
 /// [`crate::MemvidDemotionHook`] / [`crate::MemvidStoringCompactor`]:
 /// `kind`, `conversation_id`, `chat_role`, `dedup_key`, and `scope`
 /// (when configured).
-pub(crate) fn write_frame(
-    store: &MemvidStore,
+pub(crate) async fn write_frame<S>(
+    store: &S,
     config: &MemoryConfig,
     dedup: &DedupSet,
     kind: FrameKind,
     conversation_id: &str,
     chat_role: &str,
     text: &str,
-) -> Result<bool, MemoryError> {
+) -> Result<bool, MemoryError>
+where
+    S: TextWriter<Options = PutOptions>,
+    <S as TextWriter>::Error: std::error::Error + Send + Sync + 'static,
+{
     if text.is_empty() {
         return Ok(false);
     }
@@ -58,14 +63,14 @@ pub(crate) fn write_frame(
 
     let key_hex = hex_encode_key(&key);
     let opts = build_put_options(config, kind, conversation_id, chat_role, &key_hex);
-    if let Err(err) = store.put_text_uncommitted(text, opts) {
+    if let Err(err) = store.write_text(text, opts).await {
         tracing::warn!(
             target: "rig_memvid::frame_writer",
             error = %err,
             conversation_id,
             role = chat_role,
             kind = kind.as_str(),
-            "failed to persist frame into memvid",
+            "failed to persist frame into memory backend",
         );
         return Err(MemoryError::backend(Box::new(err)));
     }
@@ -88,13 +93,18 @@ pub(crate) fn write_frame(
 
 /// Commit the underlying archive if [`MemoryConfig::commit_each_turn`]
 /// is enabled. No-op otherwise.
-pub(crate) fn commit_if_each_turn(
-    store: &MemvidStore,
+pub(crate) async fn commit_if_each_turn<S>(
+    store: &S,
     config: &MemoryConfig,
-) -> Result<(), MemoryError> {
+) -> Result<(), MemoryError>
+where
+    S: Committable,
+    <S as Committable>::Error: std::error::Error + Send + Sync + 'static,
+{
     if config.commit_each_turn {
         store
             .commit()
+            .await
             .map_err(|err| MemoryError::backend(Box::new(err)))?;
     }
     Ok(())

@@ -178,9 +178,10 @@ where
                     conversation_id,
                     "system",
                     &rendered,
-                )?;
+                )
+                .await?;
                 if written {
-                    commit_if_each_turn(&self.store, &self.config)?;
+                    commit_if_each_turn(&self.store, &self.config).await?;
                 }
                 #[cfg(feature = "observe")]
                 {
