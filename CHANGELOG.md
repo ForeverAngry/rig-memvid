@@ -6,6 +6,12 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1](https://github.com/ForeverAngry/rig-memvid/compare/v0.4.0...v0.4.1) - 2026-05-29
+
+### Tests
+
+- Cover inmem compatibility shims ([#39](https://github.com/ForeverAngry/rig-memvid/pull/39))
+
 ### Added
 
 - Add compatibility tests for the `rig_memory_policy::inmem` re-export paths.
