@@ -6,6 +6,12 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/ForeverAngry/rig-memvid/compare/v0.3.0...v0.4.0) - 2026-05-29
+
+### Added
+
+- *(inmem)* Re-export policy reference store
+
 ### Changed
 
 - Re-export `InMemoryStore`, `Episode`, and `InMemoryHit` from
