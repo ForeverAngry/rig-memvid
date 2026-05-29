@@ -6,6 +6,20 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- *(compaction)* Extract backend-agnostic content-hash dedup and frame-metadata
+  envelope into the new sibling crate
+  [`rig-memory-policy`](https://crates.io/crates/rig-memory-policy) (Phase 1 of
+  [#28](https://github.com/ForeverAngry/rig-memvid/issues/28)). `crate::dedup`
+  and `crate::metadata` become thin re-export shims so every previously public
+  symbol (`FrameKind`, `MemvidFrameMetadata`, dedup helpers) keeps its existing
+  import path. `MemvidFrameMetadata` is now a type alias for
+  `rig_memory_policy::metadata::FrameMetadata`. The `compaction` feature now
+  pulls `rig-memory-policy` (which transitively brings `blake3`) instead of
+  depending on `blake3` directly.
+
+
 ## [0.2.2](https://github.com/ForeverAngry/rig-memvid/compare/v0.2.1...v0.2.2) - 2026-05-28
 
 ### Added

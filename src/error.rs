@@ -29,6 +29,22 @@ pub enum MemvidError {
     Poisoned,
 }
 
+#[cfg(feature = "compaction")]
+impl From<rig_memory_policy::PolicyError> for MemvidError {
+    /// Collapse a [`rig_memory_policy::PolicyError`] into the matching
+    /// [`MemvidError`] variant so call sites that propagate dedup errors
+    /// with `?` keep returning the historic error type.
+    fn from(err: rig_memory_policy::PolicyError) -> Self {
+        match err {
+            rig_memory_policy::PolicyError::Poisoned => MemvidError::Poisoned,
+            // `PolicyError` is `#[non_exhaustive]`; future neutral-policy
+            // failures collapse into `Poisoned` to preserve the historic
+            // error surface until `MemvidError` grows a dedicated variant.
+            _ => MemvidError::Poisoned,
+        }
+    }
+}
+
 impl From<MemvidError> for VectorStoreError {
     /// Map a [`MemvidError`] onto the closest [`VectorStoreError`] variant
     /// so rig consumers can inspect failures without downcasting through
