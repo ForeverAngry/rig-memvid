@@ -20,7 +20,7 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 ## Status
 
-- Crate version: `0.2.1`.
+- Crate version: `0.4.0`.
 - Rust edition: 2024.
 - MSRV: 1.89.
 - Upstream dependency versions are single-sourced in [Cargo.toml](Cargo.toml); the badges above link to crates.io for the current pinned versions of `rig-core` (renamed to `rig` so the historic `use rig::...` paths still work) and `memvid-core`. Both are pulled with `default-features = false`.
@@ -64,6 +64,11 @@ coordination lives in
 - [src/hook.rs](src/hook.rs): `WriteFailure`, `WriteFailureAction`, `WriteFailurePhase`, and `WriteFailureCallback` for opt-in handling of persistence failures — default behavior is `WriteFailure::Warn`; switch to `Halt` to fail the turn, or install a `Custom` callback for per-phase telemetry. The `WriteFailure*` enums are `#[non_exhaustive]`.
 - [src/inmem.rs](src/inmem.rs): compatibility re-exports for `Episode`, `InMemoryStore<E>`, `InMemoryHit<E>`, and `InMemoryError` from `rig-memory-policy`, preserving the historic no-disk deterministic lexical retrieval surface.
 - [src/error.rs](src/error.rs): `MemvidError`, the typed error surface for store, filter, lifecycle, and memvid failures.
+
+Backend-neutral code can import the no-disk reference store directly from
+`rig-memory-policy`. Existing callers can keep using `rig_memvid::inmem::*` or
+the top-level `rig_memvid::{Episode, InMemoryStore, InMemoryHit, InMemoryError}`
+paths; those names are compatibility shims over the policy crate.
 
 When the optional `observe` feature is enabled, `MemvidPersistHook`,
 `MemvidDemotionHook`, `MemvidStoringCompactor`, and the memory-card context
