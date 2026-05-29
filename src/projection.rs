@@ -780,17 +780,10 @@ mod frame_typed {
         provenance.insert("scope".into(), Value::String(scope.to_string()));
         provenance.insert("scope_uri".into(), Value::String(scope.to_string()));
 
-        let path = scope_path(scope);
+        let path = rig_memory_policy::scope_path(scope);
         if !path.is_empty() {
             provenance.insert("scope_path".into(), json!(path));
         }
-    }
-
-    fn scope_path(scope: &str) -> Vec<&str> {
-        scope
-            .split('/')
-            .filter(|segment| !segment.is_empty())
-            .collect()
     }
 
     fn insert_retention_provenance(provenance: &mut Map<String, Value>, hit: &SearchHit) {
