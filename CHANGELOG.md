@@ -6,6 +6,13 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/ForeverAngry/rig-memvid/compare/v0.2.2...v0.3.0) - 2026-05-29
+
+### Added
+
+- *(compaction)* Implement policy text writer traits
+- *(compaction)* Extract dedup + frame metadata to rig-memory-policy
+
 ### Added
 
 - *(compaction)* Implement `rig_memory_policy::TextWriter` and
