@@ -6,6 +6,13 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Re-export `InMemoryStore`, `Episode`, and `InMemoryHit` from
+  `rig-memory-policy` while preserving the existing `rig_memvid::inmem::*` and
+  top-level `rig_memvid::*` import paths (Phase 4 of
+  [#28](https://github.com/ForeverAngry/rig-memvid/issues/28)).
+
 ## [0.3.0](https://github.com/ForeverAngry/rig-memvid/compare/v0.2.2...v0.3.0) - 2026-05-29
 
 ### Added

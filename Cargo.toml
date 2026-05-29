@@ -22,11 +22,11 @@ categories = ["text-processing", "database"]
 [dependencies]
 rig = { package = "rig-core", version = "0.37.0", default-features = false }
 rig-memory = { version = "0.1.1", optional = true, default-features = false }
-# Backend-agnostic memory-policy primitives (dedup, frame metadata). Pulled
-# only by the `compaction` feature; everything `rig-memvid` exported from
-# `crate::dedup` / `crate::metadata` is re-exported from this crate for
-# backward compatibility.
-rig-memory-policy = { version = "0.1", optional = true }
+# Backend-agnostic memory-policy primitives (dedup, frame metadata, and the
+# in-memory reference store). Everything `rig-memvid` exported from
+# `crate::dedup`, `crate::metadata`, and `crate::inmem` is re-exported from
+# this crate for backward compatibility.
+rig-memory-policy = "0.2"
 memvid-core = { version = "2.0.140", default-features = false }
 thiserror = "2.0.12"
 serde = { version = "1.0.219", features = ["derive"] }
@@ -67,10 +67,8 @@ encryption = ["memvid-core/encryption"]
 # Compaction integration: enables `MemvidDemotionHook` and
 # `MemvidStoringCompactor`, which adapt rig-core's `DemotionHook` /
 # `Compactor` traits onto `MemvidStore`. Pulls `rig-memory` so callers can
-# build a `CompactingMemory` whose summaries land in `.mv2` durably, and
-# `blake3` for the in-process dedup that satisfies the upstream
-# idempotency contract on `(conversation_id, messages)`.
-compaction = ["dep:rig-memory", "dep:rig-memory-policy"]
+# build a `CompactingMemory` whose summaries land in `.mv2` durably.
+compaction = ["dep:rig-memory"]
 # Project `MemvidStore` / `InMemoryStore` retrieval hits into
 # `rig_compose::ContextItem` so hosts can fold memory recall into a
 # shared context pack. Pulls `rig-compose` as a runtime dependency.
