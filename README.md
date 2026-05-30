@@ -20,7 +20,7 @@ Rig already defines provider-agnostic retrieval and prompt-hook traits. Memvid p
 
 ## Status
 
-- Crate version: `0.4.0`.
+- Crate version: `0.4.1`.
 - Rust edition: 2024.
 - MSRV: 1.89.
 - Upstream dependency versions are single-sourced in [Cargo.toml](Cargo.toml); the badges above link to crates.io for the current pinned versions of `rig-core` (renamed to `rig` so the historic `use rig::...` paths still work) and `memvid-core`. Both are pulled with `default-features = false`.
