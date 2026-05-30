@@ -26,7 +26,7 @@ rig-memory = { version = "0.1.1", optional = true, default-features = false }
 # in-memory reference store). Everything `rig-memvid` exported from
 # `crate::dedup`, `crate::metadata`, and `crate::inmem` is re-exported from
 # this crate for backward compatibility.
-rig-memory-policy = "0.2"
+rig-memory-policy = "0.2.2"
 memvid-core = { version = "2.0.140", default-features = false }
 thiserror = "2.0.12"
 serde = { version = "1.0.219", features = ["derive"] }
