@@ -6,6 +6,11 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Reuse `rig-memory-policy` 0.2.2 for scope path projection provenance,
+  replacing the local helper with the shared backend-neutral implementation.
+
 ## [0.4.1](https://github.com/ForeverAngry/rig-memvid/compare/v0.4.0...v0.4.1) - 2026-05-29
 
 ### Tests
