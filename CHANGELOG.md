@@ -6,6 +6,12 @@ All notable changes to `rig-memvid` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/ForeverAngry/rig-memvid/compare/v0.4.1...v0.4.2) - 2026-05-30
+
+### Documentation
+
+- Align README Status block with shipped 0.4.1 ([#41](https://github.com/ForeverAngry/rig-memvid/pull/41))
+
 ### Changed
 
 - Reuse `rig-memory-policy` 0.2.2 for scope path projection provenance,
