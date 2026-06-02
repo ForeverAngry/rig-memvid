@@ -38,7 +38,7 @@ futures = "0.3.32"
 # free of the rig-compose dep. No `path = "..."` here on purpose —
 # downstream consumers outside the umbrella workspace must be able to
 # build `--features context-projection` against the published crate.
-rig-compose = { version = "0.4", optional = true, default-features = false }
+rig-compose = { version = "0.5", optional = true, default-features = false }
 # Structured observability event emission for the persist hook,
 # compactor, and demotion paths. Pulled only when the `observe`
 # feature is enabled.
@@ -48,7 +48,7 @@ rig-tap = { version = "0.1", optional = true }
 anyhow = "1.0.102"
 tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rig-compose = { version = "0.4" }
+rig-compose = { version = "0.5" }
 tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

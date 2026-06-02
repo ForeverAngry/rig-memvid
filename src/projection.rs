@@ -38,13 +38,12 @@
 //! ```
 
 use memvid_core::{MemoryCard, SearchHit};
+use rig_compose::context::{ContextProjectionState, ContextProvenance};
 use rig_compose::{ContextItem, ContextSourceKind};
 use serde_json::{Map, Value, json};
 
 use crate::cards_context::{CardDoc, format_card, kind_str, polarity_str};
 use crate::inmem::{Episode, InMemoryHit};
-
-const STATE_CANDIDATE: &str = "candidate";
 
 /// Convert a domain-native retrieval hit into a backend-neutral
 /// [`ContextItem`].
@@ -78,38 +77,42 @@ fn search_hit_score(hit: &SearchHit) -> f64 {
     }
 }
 
-fn search_hit_provenance(hit: &SearchHit) -> Value {
-    let mut provenance = Map::new();
-    provenance.insert("resource".into(), Value::String("memvid.search".into()));
-    provenance.insert("frame_id".into(), Value::String(hit.frame_id.to_string()));
-    provenance.insert("source_frame_id".into(), json!(hit.frame_id));
-    provenance.insert("uri".into(), Value::String(hit.uri.clone()));
-    provenance.insert("source_uri".into(), Value::String(hit.uri.clone()));
-    provenance.insert("rank".into(), json!(hit.rank));
-    provenance.insert("matches".into(), json!(hit.matches));
-    provenance.insert(
-        "projection_state".into(),
-        Value::String(STATE_CANDIDATE.into()),
-    );
+fn search_hit_provenance(hit: &SearchHit) -> (ContextProvenance, Value) {
+    let mut meta = Map::new();
+    meta.insert("resource".into(), Value::String("memvid.search".into()));
+    meta.insert("frame_id".into(), Value::String(hit.frame_id.to_string()));
+    meta.insert("uri".into(), Value::String(hit.uri.clone()));
+    meta.insert("rank".into(), json!(hit.rank));
+    meta.insert("matches".into(), json!(hit.matches));
+
     let (range_start, range_end) = hit.range;
-    provenance.insert("range".into(), json!([range_start, range_end]));
+    meta.insert("range".into(), json!([range_start, range_end]));
     if let Some(score) = hit.score {
-        provenance.insert("score".into(), json!(score));
-        provenance.insert("confidence".into(), json!(score));
+        meta.insert("score".into(), json!(score));
     }
     if let Some(title) = hit.title.as_ref() {
-        provenance.insert("title".into(), Value::String(title.clone()));
+        meta.insert("title".into(), Value::String(title.clone()));
     }
     if let Some(chunk_range) = hit.chunk_range {
         let (start, end) = chunk_range;
-        provenance.insert("chunk_range".into(), json!([start, end]));
+        meta.insert("chunk_range".into(), json!([start, end]));
     }
     if let Some(metadata) = hit.metadata.as_ref()
         && let Ok(value) = serde_json::to_value(metadata)
     {
-        provenance.insert("metadata".into(), value);
+        meta.insert("metadata".into(), value); // kept metadata field un-renamed!
     }
-    Value::Object(provenance)
+
+    let mut prov = ContextProvenance::new()
+        .with_source_frame_id(hit.frame_id.to_string())
+        .with_source_uri(hit.uri.clone())
+        .with_projection_state(ContextProjectionState::Candidate);
+
+    if let Some(score) = hit.score {
+        prov = prov.with_confidence(f64::from(score));
+    }
+
+    (prov, Value::Object(meta))
 }
 
 fn fallback_score(rank: usize) -> f64 {
@@ -152,75 +155,76 @@ fn card_doc_source_id(doc: &CardDoc) -> String {
     )
 }
 
-fn memory_card_provenance(card: &MemoryCard) -> Value {
-    let mut provenance = Map::new();
-    provenance.insert("schema_version".into(), json!(1));
-    provenance.insert("resource".into(), Value::String("memvid.card".into()));
-    provenance.insert("card_id".into(), json!(card.id));
-    provenance.insert("entity".into(), Value::String(card.entity.clone()));
-    provenance.insert("principal".into(), Value::String(card.entity.clone()));
-    provenance.insert("slot".into(), Value::String(card.slot.clone()));
-    provenance.insert(
+fn memory_card_provenance(card: &MemoryCard) -> (ContextProvenance, Value) {
+    let mut meta = Map::new();
+    meta.insert("schema_version".into(), json!(1));
+    meta.insert("resource".into(), Value::String("memvid.card".into()));
+    meta.insert("card_id".into(), json!(card.id));
+    meta.insert("entity".into(), Value::String(card.entity.clone()));
+    meta.insert("slot".into(), Value::String(card.slot.clone()));
+    meta.insert(
         "kind".into(),
         Value::String(kind_str(card.kind).to_string()),
     );
-    provenance.insert("polarity".into(), json!(card.polarity.map(polarity_str)));
-    provenance.insert("source_frame_id".into(), json!(card.source_frame_id));
-    provenance.insert("source_uri".into(), json!(card.source_uri));
-    provenance.insert("engine".into(), Value::String(card.engine.clone()));
-    provenance.insert("confidence".into(), json!(card.confidence));
-    provenance.insert("recorded_at_millis".into(), json!(card.created_at));
-    provenance.insert(
-        "projection_state".into(),
-        Value::String(STATE_CANDIDATE.into()),
-    );
-    // Supersession-relevant fields. `version_key` groups two cards that
-    // describe the same fact across writes; `effective_timestamp` is the
-    // monotonic recency signal used to pick a survivor.
-    provenance.insert(
-        "version_key".into(),
-        Value::String(
-            card.version_key
-                .clone()
-                .unwrap_or_else(|| card.default_version_key()),
-        ),
-    );
-    provenance.insert(
+    meta.insert("polarity".into(), json!(card.polarity.map(polarity_str)));
+    meta.insert("engine".into(), Value::String(card.engine.clone()));
+    meta.insert(
         "effective_timestamp".into(),
         json!(card.effective_timestamp()),
     );
-    provenance.insert(
-        "effective_at_millis".into(),
-        json!(card.effective_timestamp()),
-    );
+
     if let Some(event_date) = card.event_date {
-        provenance.insert("event_date".into(), json!(event_date));
+        meta.insert("event_date".into(), json!(event_date));
     }
     if let Some(document_date) = card.document_date {
-        provenance.insert("document_date".into(), json!(document_date));
+        meta.insert("document_date".into(), json!(document_date));
     }
-    Value::Object(provenance)
+
+    let mut prov = ContextProvenance::new()
+        .with_principal(card.entity.clone())
+        .with_source_frame_id(card.source_frame_id.to_string())
+        .with_projection_state(ContextProjectionState::Candidate)
+        .with_version_key(
+            card.version_key
+                .clone()
+                .unwrap_or_else(|| card.default_version_key()),
+        )
+        .with_effective_at_millis(card.effective_timestamp())
+        .with_recorded_at_millis(card.created_at);
+
+    if let Some(uri) = &card.source_uri {
+        prov = prov.with_source_uri(uri.clone());
+    }
+
+    if let Some(confidence) = card.confidence {
+        prov = prov.with_confidence(f64::from(confidence));
+    }
+
+    (prov, Value::Object(meta))
 }
 
-fn card_doc_provenance(doc: &CardDoc) -> Value {
-    json!({
-        "schema_version": 1,
-        "resource": "memvid.card",
-        "entity": doc.entity,
-        "principal": doc.entity,
-        "slot": doc.slot,
-        "kind": doc.kind,
-        "polarity": polarity_value(doc.polarity.clone()),
-        "source_frame_id": doc.source_frame_id,
-        "confidence": doc.confidence,
-        "projection_state": STATE_CANDIDATE,
-        // CardDoc lacks explicit version/event timestamps; default the
-        // supersession key to entity:slot and use source_frame_id as the
-        // monotonic recency proxy (memvid frames are append-only).
-        "version_key": format!("{}:{}", doc.entity, doc.slot),
-        "effective_timestamp": doc.source_frame_id,
-        "effective_at_millis": doc.source_frame_id,
-    })
+fn card_doc_provenance(doc: &CardDoc) -> (ContextProvenance, Value) {
+    let mut meta = Map::new();
+    meta.insert("schema_version".into(), json!(1));
+    meta.insert("resource".into(), Value::String("memvid.card".into()));
+    meta.insert("entity".into(), Value::String(doc.entity.clone()));
+    meta.insert("slot".into(), Value::String(doc.slot.clone()));
+    meta.insert("kind".into(), Value::String(doc.kind.clone()));
+    meta.insert("polarity".into(), polarity_value(doc.polarity.clone()));
+    meta.insert("effective_timestamp".into(), json!(doc.source_frame_id));
+
+    let mut prov = ContextProvenance::new()
+        .with_principal(doc.entity.clone())
+        .with_source_frame_id(doc.source_frame_id.to_string())
+        .with_projection_state(ContextProjectionState::Candidate)
+        .with_version_key(format!("{}:{}", doc.entity, doc.slot))
+        .with_effective_at_millis(doc.source_frame_id.try_into().unwrap_or(0));
+
+    if let Some(conf) = doc.confidence {
+        prov = prov.with_confidence(f64::from(conf));
+    }
+
+    (prov, Value::Object(meta))
 }
 
 impl IntoContextItem for SearchHit {
@@ -232,21 +236,24 @@ impl IntoContextItem for SearchHit {
         )
         .with_rank(rank)
         .with_score(search_hit_score(self))
-        .with_provenance(search_hit_provenance(self))
+        .with_context_provenance(search_hit_provenance(self).0)
+        .with_metadata(search_hit_provenance(self).1)
     }
 }
 
 impl<E: Episode> IntoContextItem for InMemoryHit<E> {
     fn to_context_item(&self, rank: usize) -> ContextItem {
-        let provenance = json!({
+        let meta = json!({
             "resource": "memvid.inmem",
-            "source_uri": format!("memory://inmem/{}", self.key),
             "key": self.key,
-            "source_frame_id": self.key,
             "score": self.score,
-            "confidence": self.score,
-            "projection_state": STATE_CANDIDATE,
         });
+        let prov = ContextProvenance::new()
+            .with_source_uri(format!("memory://inmem/{}", self.key))
+            .with_source_frame_id(self.key.clone())
+            .with_confidence(f64::from(self.score))
+            .with_projection_state(ContextProjectionState::Candidate);
+
         ContextItem::new(
             ContextSourceKind::Memory,
             self.key.clone(),
@@ -254,7 +261,8 @@ impl<E: Episode> IntoContextItem for InMemoryHit<E> {
         )
         .with_rank(rank)
         .with_score(f64::from(self.score))
-        .with_provenance(provenance)
+        .with_context_provenance(prov)
+        .with_metadata(meta)
     }
 }
 
@@ -267,7 +275,8 @@ impl IntoContextItem for MemoryCard {
         )
         .with_rank(rank)
         .with_score(card_score(self.confidence, rank))
-        .with_provenance(memory_card_provenance(self))
+        .with_context_provenance(memory_card_provenance(self).0)
+        .with_metadata(memory_card_provenance(self).1)
     }
 }
 
@@ -280,7 +289,8 @@ impl IntoContextItem for CardDoc {
         )
         .with_rank(rank)
         .with_score(card_score(self.confidence, rank))
-        .with_provenance(card_doc_provenance(self))
+        .with_context_provenance(card_doc_provenance(self).0)
+        .with_metadata(card_doc_provenance(self).1)
     }
 }
 
@@ -382,18 +392,24 @@ impl MemoryCandidate {
 
     /// Monotonic recency used to choose a survivor inside a
     /// supersession group. Resolved in priority order from
-    /// `provenance.effective_timestamp` then `provenance.source_frame_id`.
+    /// `provenance.effective_at_millis` then `provenance.source_frame_id`.
     /// Returns `None` if neither is present, in which case the
     /// algorithm falls back to first-occurrence order.
     #[must_use]
     pub fn recency(&self) -> Option<i64> {
         let map = self.item.provenance.as_object()?;
-        if let Some(v) = map.get("effective_timestamp").and_then(Value::as_i64) {
+        if let Some(v) = map.get("effective_at_millis").and_then(Value::as_i64) {
             return Some(v);
         }
-        // `source_frame_id` is unsigned in memvid; clamp to i64 range.
+        // `source_frame_id` is serialized as a string by
+        // [`ContextProvenance`]; parse it back to an integer when present.
+        // memvid frame ids are unsigned, so clamp to the i64 range.
         map.get("source_frame_id")
-            .and_then(Value::as_u64)
+            .and_then(|value| match value {
+                Value::String(s) => s.parse::<u64>().ok(),
+                Value::Number(_) => value.as_u64(),
+                _ => None,
+            })
             .map(|v| i64::try_from(v).unwrap_or(i64::MAX))
     }
 }
@@ -584,12 +600,11 @@ mod frame_typed {
     //! older summary by a newer one with the same dedup key.
 
     use memvid_core::SearchHit;
+    use rig_compose::context::{ContextProjectionState, ContextProvenance};
     use rig_compose::{ContextItem, ContextSourceKind};
     use serde_json::{Map, Value, json};
 
-    use super::{
-        MemoryCandidate, STATE_CANDIDATE, fallback_score, search_hit_provenance, search_hit_score,
-    };
+    use super::{MemoryCandidate, fallback_score, search_hit_provenance, search_hit_score};
     use crate::metadata::{FrameKind, MemvidFrameMetadata};
 
     const RETENTION_TIER_KEYS: &[&str] = &["retention_tier", "retention_class"];
@@ -681,7 +696,8 @@ mod frame_typed {
             )
             .with_rank(rank)
             .with_score(search_hit_score(hit))
-            .with_provenance(search_hit_provenance(hit));
+            .with_context_provenance(search_hit_provenance(hit).0)
+            .with_metadata(search_hit_provenance(hit).1);
         };
 
         let role = MemoryFrameRole::from(envelope.kind);
@@ -698,7 +714,8 @@ mod frame_typed {
         ContextItem::new(ContextSourceKind::Memory, source_id, hit.text.clone())
             .with_rank(rank)
             .with_score(search_hit_score(hit))
-            .with_provenance(provenance)
+            .with_context_provenance(provenance.0)
+            .with_metadata(provenance.1)
     }
 
     fn typed_provenance(
@@ -706,7 +723,7 @@ mod frame_typed {
         envelope: &MemvidFrameMetadata,
         role: MemoryFrameRole,
         rank: usize,
-    ) -> Value {
+    ) -> (ContextProvenance, Value) {
         let mut provenance = Map::new();
         provenance.insert("schema_version".into(), json!(1));
         provenance.insert(
@@ -719,15 +736,10 @@ mod frame_typed {
         );
         provenance.insert("frame_kind".into(), Value::String(role.as_str().into()));
         provenance.insert("frame_id".into(), Value::String(hit.frame_id.to_string()));
-        provenance.insert("source_frame_id".into(), json!(hit.frame_id));
         provenance.insert("uri".into(), Value::String(hit.uri.clone()));
-        provenance.insert("source_uri".into(), Value::String(hit.uri.clone()));
         provenance.insert("rank".into(), json!(rank));
         provenance.insert("matches".into(), json!(hit.matches));
-        provenance.insert(
-            "projection_state".into(),
-            Value::String(STATE_CANDIDATE.into()),
-        );
+
         let (range_start, range_end) = hit.range;
         provenance.insert("range".into(), json!([range_start, range_end]));
         let score = match hit.score {
@@ -735,7 +747,6 @@ mod frame_typed {
             None => fallback_score(rank),
         };
         provenance.insert("score".into(), json!(score));
-        provenance.insert("confidence".into(), json!(score));
         if let Some(title) = hit.title.as_ref() {
             provenance.insert("title".into(), Value::String(title.clone()));
         }
@@ -747,55 +758,47 @@ mod frame_typed {
             "chat_role".into(),
             Value::String(envelope.chat_role.clone()),
         );
-        // Mirror chat_role into the shared `principal` slot so packers
-        // that scope by principal (e.g. multi-tenant inspectors) see a
-        // value for compacted memory just like they do for cards.
-        provenance.insert(
-            "principal".into(),
-            Value::String(envelope.chat_role.clone()),
-        );
         provenance.insert(
             "dedup_key".into(),
             Value::String(envelope.dedup_key.clone()),
         );
+
+        let mut prov = ContextProvenance::new()
+            .with_source_frame_id(hit.frame_id.to_string())
+            .with_source_uri(hit.uri.clone())
+            .with_projection_state(ContextProjectionState::Candidate)
+            .with_principal(envelope.chat_role.clone())
+            .with_confidence(score);
+
         if let Some(scope) = envelope.scope.as_ref() {
-            insert_scope_provenance(&mut provenance, scope);
+            prov = prov.with_scope(scope.to_string());
+            provenance.insert("scope".into(), Value::String(scope.to_string()));
+            provenance.insert("scope_uri".into(), Value::String(scope.to_string()));
+            let path = rig_memory_policy::scope_path(scope);
+            if !path.is_empty() {
+                provenance.insert("scope_path".into(), json!(path));
+            }
         }
-        insert_retention_provenance(&mut provenance, hit);
-        // Build a stable supersession key. Two writes of the same
-        // dedup_key are content-identical by construction (blake3 over
-        // the body); pinning the role keeps a raw frame from
-        // superseding its later summary or vice versa.
+
+        if let Some(metadata) = hit.metadata.as_ref() {
+            if let Some(tier) = first_extra_metadata_value(metadata, RETENTION_TIER_KEYS) {
+                prov = prov.with_retention_tier(tier.to_string());
+                provenance.insert("retention_tier".into(), Value::String(tier.to_string()));
+            }
+            if let Some(policy) = first_extra_metadata_value(metadata, RETENTION_POLICY_KEYS) {
+                provenance.insert("retention_policy".into(), Value::String(policy.to_string()));
+            }
+        }
+
         let version_key = format!("{}:{}", role.as_str(), envelope.dedup_key);
+        prov = prov.with_version_key(version_key.clone());
         provenance.insert("version_key".into(), Value::String(version_key));
-        // Memvid frames are append-only, so `frame_id` is a monotonic
-        // recency proxy: a later write of the same dedup_key would
-        // land at a higher frame id and naturally win supersession.
+
+        prov = prov.with_effective_at_millis(hit.frame_id.try_into().unwrap_or(0));
         provenance.insert("effective_at_millis".into(), json!(hit.frame_id));
         provenance.insert("effective_timestamp".into(), json!(hit.frame_id));
-        Value::Object(provenance)
-    }
 
-    fn insert_scope_provenance(provenance: &mut Map<String, Value>, scope: &str) {
-        provenance.insert("scope".into(), Value::String(scope.to_string()));
-        provenance.insert("scope_uri".into(), Value::String(scope.to_string()));
-
-        let path = rig_memory_policy::scope_path(scope);
-        if !path.is_empty() {
-            provenance.insert("scope_path".into(), json!(path));
-        }
-    }
-
-    fn insert_retention_provenance(provenance: &mut Map<String, Value>, hit: &SearchHit) {
-        let Some(metadata) = hit.metadata.as_ref() else {
-            return;
-        };
-        if let Some(tier) = first_extra_metadata_value(metadata, RETENTION_TIER_KEYS) {
-            provenance.insert("retention_tier".into(), Value::String(tier.to_string()));
-        }
-        if let Some(policy) = first_extra_metadata_value(metadata, RETENTION_POLICY_KEYS) {
-            provenance.insert("retention_policy".into(), Value::String(policy.to_string()));
-        }
+        (prov, Value::Object(provenance))
     }
 
     fn first_extra_metadata_value<'a>(
@@ -952,13 +955,14 @@ mod tests {
         assert!((item.score - 0.5).abs() < 1e-6);
         assert_eq!(item.text, "snippet ");
         let provenance = item.provenance.as_object().unwrap();
-        assert_eq!(provenance["resource"], "memvid.search");
-        assert_eq!(provenance["frame_id"], "42");
-        assert_eq!(provenance["source_frame_id"], 42);
-        assert_eq!(provenance["uri"], "memvid://frame/42");
+        let metadata = item.metadata.as_object().unwrap();
+        assert_eq!(metadata["resource"], "memvid.search");
+        assert_eq!(metadata["frame_id"], "42");
+        assert_eq!(provenance["source_frame_id"], "42");
+        assert_eq!(metadata["uri"], "memvid://frame/42");
         assert_eq!(provenance["source_uri"], "memvid://frame/42");
         assert_eq!(provenance["projection_state"], "candidate");
-        assert_eq!(provenance["title"], "note");
+        assert_eq!(metadata["title"], "note");
         let confidence = provenance["confidence"].as_f64().unwrap();
         assert!((confidence - 0.5).abs() < 1e-6);
     }
@@ -984,8 +988,9 @@ mod tests {
         assert_eq!(item.rank, 3);
         assert_eq!(item.text, "maintenance window opens at noon");
         let provenance = item.provenance.as_object().unwrap();
-        assert_eq!(provenance["resource"], "memvid.inmem");
-        assert_eq!(provenance["key"], "ep-0000000000000001");
+        let metadata = item.metadata.as_object().unwrap();
+        assert_eq!(metadata["resource"], "memvid.inmem");
+        assert_eq!(metadata["key"], "ep-0000000000000001");
         assert_eq!(
             provenance["source_uri"],
             "memory://inmem/ep-0000000000000001"
@@ -1042,17 +1047,18 @@ mod tests {
         assert_eq!(item.text, "pref Ada likes espresso");
 
         let provenance = item.provenance.as_object().unwrap();
-        assert_eq!(provenance["schema_version"], 1);
-        assert_eq!(provenance["resource"], "memvid.card");
-        assert_eq!(provenance["card_id"], 77);
-        assert_eq!(provenance["entity"], "Ada");
+        let metadata = item.metadata.as_object().unwrap();
+        assert_eq!(metadata["schema_version"], 1);
+        assert_eq!(metadata["resource"], "memvid.card");
+        assert_eq!(metadata["card_id"], 77);
+        assert_eq!(metadata["entity"], "Ada");
         assert_eq!(provenance["principal"], "Ada");
-        assert_eq!(provenance["slot"], "drink");
-        assert_eq!(provenance["kind"], "pref");
-        assert_eq!(provenance["polarity"], "positive");
-        assert_eq!(provenance["source_frame_id"], 42);
+        assert_eq!(metadata["slot"], "drink");
+        assert_eq!(metadata["kind"], "pref");
+        assert_eq!(metadata["polarity"], "positive");
+        assert_eq!(provenance["source_frame_id"], "42");
         assert_eq!(provenance["source_uri"], "memvid://frame/42");
-        assert_eq!(provenance["engine"], "test-extractor");
+        assert_eq!(metadata["engine"], "test-extractor");
         assert_eq!(provenance["recorded_at_millis"], 99);
         assert_eq!(provenance["projection_state"], "candidate");
         assert_eq!(provenance["effective_at_millis"], 99);
@@ -1078,11 +1084,12 @@ mod tests {
         assert_eq!(item.text, "pref Ada likes espresso");
 
         let provenance = item.provenance.as_object().unwrap();
-        assert_eq!(provenance["resource"], "memvid.card");
-        assert_eq!(provenance["schema_version"], 1);
-        assert_eq!(provenance["entity"], "Ada");
+        let metadata = item.metadata.as_object().unwrap();
+        assert_eq!(metadata["resource"], "memvid.card");
+        assert_eq!(metadata["schema_version"], 1);
+        assert_eq!(metadata["entity"], "Ada");
         assert_eq!(provenance["principal"], "Ada");
-        assert_eq!(provenance["polarity"], "positive");
+        assert_eq!(metadata["polarity"], "positive");
         assert_eq!(provenance["projection_state"], "candidate");
         assert_eq!(provenance["effective_at_millis"], 42);
         let confidence = provenance["confidence"].as_f64().unwrap();
@@ -1110,8 +1117,9 @@ mod tests {
         assert_eq!(pack.selected[1].source_id, "10");
         assert_eq!(pack.omitted.len(), 1);
         assert_eq!(pack.omitted[0].reason, ContextOmissionReason::OverBudget);
-        let provenance = pack.selected[0].provenance.as_object().unwrap();
-        assert_eq!(provenance["resource"], "memvid.card");
+        let metadata = pack.selected[0].metadata.as_object().unwrap();
+        let _provenance = pack.selected[0].provenance.as_object().unwrap();
+        assert_eq!(metadata["resource"], "memvid.card");
     }
 
     // ── Supersession tests ──────────────────────────────────────────────
@@ -1372,15 +1380,16 @@ mod tests {
             assert!(matches!(item.source, ContextSourceKind::Memory));
             assert_eq!(item.source_id, "summary/42");
             let provenance = item.provenance.as_object().unwrap();
-            assert_eq!(provenance["resource"], "memvid.summary");
-            assert_eq!(provenance["frame_kind"], "compaction_summary");
-            assert_eq!(provenance["conversation_id"], "conv-1");
-            assert_eq!(provenance["chat_role"], "assistant");
+            let metadata = item.metadata.as_object().unwrap();
+            assert_eq!(metadata["resource"], "memvid.summary");
+            assert_eq!(metadata["frame_kind"], "compaction_summary");
+            assert_eq!(metadata["conversation_id"], "conv-1");
+            assert_eq!(metadata["chat_role"], "assistant");
             assert_eq!(provenance["principal"], "assistant");
-            assert_eq!(provenance["dedup_key"], "abc");
+            assert_eq!(metadata["dedup_key"], "abc");
             assert_eq!(provenance["scope"], "project-x");
-            assert_eq!(provenance["scope_uri"], "project-x");
-            assert_eq!(provenance["scope_path"], json!(["project-x"]));
+            assert_eq!(metadata["scope_uri"], "project-x");
+            assert_eq!(metadata["scope_path"], json!(["project-x"]));
             assert_eq!(provenance["version_key"], "compaction_summary:abc");
             assert_eq!(provenance["effective_at_millis"], 42);
             assert_eq!(provenance["projection_state"], "candidate");
@@ -1394,8 +1403,9 @@ mod tests {
             let item = typed_search_hit_to_context_item(&demoted, 0);
             assert_eq!(item.source_id, "frame/7");
             let provenance = item.provenance.as_object().unwrap();
-            assert_eq!(provenance["resource"], "memvid.frame");
-            assert_eq!(provenance["frame_kind"], "demoted_message");
+            let metadata = item.metadata.as_object().unwrap();
+            assert_eq!(metadata["resource"], "memvid.frame");
+            assert_eq!(metadata["frame_kind"], "demoted_message");
             assert_eq!(provenance["version_key"], "demoted_message:xyz");
         }
 
@@ -1420,15 +1430,16 @@ mod tests {
 
             let item = typed_search_hit_to_context_item(&summary, 0);
             let provenance = item.provenance.as_object().unwrap();
+            let metadata = item.metadata.as_object().unwrap();
 
             assert_eq!(provenance["scope"], "tenant-a/workspace-b/profile-c");
-            assert_eq!(provenance["scope_uri"], "tenant-a/workspace-b/profile-c");
+            assert_eq!(metadata["scope_uri"], "tenant-a/workspace-b/profile-c");
             assert_eq!(
-                provenance["scope_path"],
+                metadata["scope_path"],
                 json!(["tenant-a", "workspace-b", "profile-c"])
             );
             assert_eq!(provenance["retention_tier"], "warm");
-            assert_eq!(provenance["retention_policy"], "retain-90d");
+            assert_eq!(metadata["retention_policy"], "retain-90d");
         }
 
         #[test]
@@ -1449,9 +1460,10 @@ mod tests {
 
             let item = typed_search_hit_to_context_item(&summary, 0);
             let provenance = item.provenance.as_object().unwrap();
+            let metadata = item.metadata.as_object().unwrap();
 
             assert_eq!(provenance["retention_tier"], "cold");
-            assert_eq!(provenance["retention_policy"], "archive");
+            assert_eq!(metadata["retention_policy"], "archive");
         }
 
         #[test]
@@ -1460,8 +1472,9 @@ mod tests {
             let item = typed_search_hit_to_context_item(&hit, 0);
             assert_eq!(item.source_id, "9");
             let provenance = item.provenance.as_object().unwrap();
-            assert_eq!(provenance["resource"], "memvid.search");
-            assert!(provenance.get("frame_kind").is_none());
+            let metadata = item.metadata.as_object().unwrap();
+            assert_eq!(metadata["resource"], "memvid.search");
+            assert!(metadata.get("frame_kind").is_none());
             assert!(provenance.get("version_key").is_none());
         }
 
